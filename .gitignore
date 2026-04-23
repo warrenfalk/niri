@@ -1,4 +1,8 @@
 /target
 /result
 
+# wf-added
+# because codex can't stop creating these
+.codex
+
 .idea
