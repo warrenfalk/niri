@@ -57,6 +57,7 @@ use smithay::wayland::selection::{SelectionHandler, SelectionTarget};
 use smithay::wayland::session_lock::{
     LockSurface, SessionLockHandler, SessionLockManagerState, SessionLocker,
 };
+use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 use smithay::wayland::tablet_manager::TabletSeatHandler;
 use smithay::wayland::xdg_activation::{
     XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData,
@@ -97,6 +98,16 @@ use crate::{
 };
 
 pub const XDG_ACTIVATION_TOKEN_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn surface_app_id_and_title(surface: &WlSurface) -> (Option<String>, Option<String>) {
+    with_states(surface, |states| {
+        let Some(role) = states.data_map.get::<XdgToplevelSurfaceData>() else {
+            return (None, None);
+        };
+        let role = role.lock().unwrap();
+        (role.app_id.clone(), role.title.clone())
+    })
+}
 
 impl SeatHandler for State {
     type KeyboardFocus = WlSurface;
@@ -775,18 +786,62 @@ impl XdgActivationHandler for State {
         &mut self.niri.activation_state
     }
 
-    fn token_created(&mut self, _token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+    fn token_created(&mut self, token: XdgActivationToken, data: XdgActivationTokenData) -> bool {
+        let source_surface = data
+            .surface
+            .as_ref()
+            .map(|surface| surface.id().to_string());
+        let (source_app_id, source_title) = data
+            .surface
+            .as_ref()
+            .map(surface_app_id_and_title)
+            .unwrap_or((None, None));
+        let elapsed_ms = data.timestamp.elapsed().as_millis();
+        let (honor_invalid_serial, log_xdg_activation) = {
+            let config = self.niri.config.borrow();
+            (
+                config.debug.honor_xdg_activation_with_invalid_serial,
+                config.debug.log_xdg_activation,
+            )
+        };
+
         // Tokens without a serial are urgency-only. This is not specified, but it seems to be the
         // common client behavior.
         //
         // See also: https://gitlab.freedesktop.org/wayland/wayland-protocols/-/issues/150
         let Some((serial, seat)) = data.serial else {
+            if log_xdg_activation {
+                debug!(
+                    token = token.as_str(),
+                    elapsed_ms,
+                    ?source_surface,
+                    ?source_app_id,
+                    ?source_title,
+                    "xdg-activation token created without serial; accepting as urgency-only"
+                );
+            }
             data.user_data.insert_if_missing(|| UrgentOnlyMarker);
             return true;
         };
         let Some(seat) = Seat::<State>::from_resource(&seat) else {
+            if log_xdg_activation {
+                debug!(
+                    token = token.as_str(),
+                    elapsed_ms,
+                    ?source_surface,
+                    ?source_app_id,
+                    ?source_title,
+                    "xdg-activation token rejected because the seat is unknown"
+                );
+            }
             return false;
         };
+
+        let kb_last_enter = seat.get_keyboard().unwrap().last_enter();
+        let kb_valid = kb_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter));
+        let pointer_last_enter = seat.get_pointer().unwrap().last_enter();
+        let pointer_valid =
+            pointer_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter));
 
         // Widely-used clients such as Discord and Telegram make new tokens (with invalid serials)
         // upon clicking on their tray icon or on their notification. This debug flag makes that
@@ -795,23 +850,62 @@ impl XdgActivationHandler for State {
         // Clicking on a notification sends clients a perfectly valid activation token from the
         // notification daemon, but alas they ignore it. Maybe in the future the clients are fixed,
         // and we can remove this debug flag.
-        let config = self.niri.config.borrow();
-        if config.debug.honor_xdg_activation_with_invalid_serial {
+        if honor_invalid_serial {
+            if log_xdg_activation {
+                debug!(
+                    token = token.as_str(),
+                    elapsed_ms,
+                    ?source_surface,
+                    ?source_app_id,
+                    ?source_title,
+                    kb_valid,
+                    pointer_valid,
+                    "xdg-activation token accepted because honor-xdg-activation-with-invalid-serial is enabled"
+                );
+            }
             return true;
         }
 
         // Check the serial against both a keyboard and a pointer, since layer-shell surfaces
         // with no keyboard interactivity won't have any keyboard focus.
-        let kb_last_enter = seat.get_keyboard().unwrap().last_enter();
-        if kb_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter)) {
+        if kb_valid {
+            if log_xdg_activation {
+                debug!(
+                    token = token.as_str(),
+                    elapsed_ms,
+                    ?source_surface,
+                    ?source_app_id,
+                    ?source_title,
+                    "xdg-activation token accepted via keyboard serial"
+                );
+            }
             return true;
         }
 
-        let pointer_last_enter = seat.get_pointer().unwrap().last_enter();
-        if pointer_last_enter.is_some_and(|last_enter| serial.is_no_older_than(&last_enter)) {
+        if pointer_valid {
+            if log_xdg_activation {
+                debug!(
+                    token = token.as_str(),
+                    elapsed_ms,
+                    ?source_surface,
+                    ?source_app_id,
+                    ?source_title,
+                    "xdg-activation token accepted via pointer serial"
+                );
+            }
             return true;
         }
 
+        if log_xdg_activation {
+            debug!(
+                token = token.as_str(),
+                elapsed_ms,
+                ?source_surface,
+                ?source_app_id,
+                ?source_title,
+                "xdg-activation token rejected because its serial is older than the focused keyboard/pointer serials"
+            );
+        }
         false
     }
 
@@ -821,9 +915,36 @@ impl XdgActivationHandler for State {
         token_data: XdgActivationTokenData,
         surface: WlSurface,
     ) {
+        let log_xdg_activation = self.niri.config.borrow().debug.log_xdg_activation;
+        let elapsed_ms = token_data.timestamp.elapsed().as_millis();
+        let source_surface = token_data
+            .surface
+            .as_ref()
+            .map(|surface| surface.id().to_string());
+        let (source_app_id, source_title) = token_data
+            .surface
+            .as_ref()
+            .map(surface_app_id_and_title)
+            .unwrap_or((None, None));
+        let (target_app_id, target_title) = surface_app_id_and_title(&surface);
+
         if token_data.timestamp.elapsed() < XDG_ACTIVATION_TOKEN_TIMEOUT {
             if let Some((mapped, _)) = self.niri.layout.find_window_and_output_mut(&surface) {
                 let window = mapped.window.clone();
+                if log_xdg_activation {
+                    debug!(
+                        token = token.as_str(),
+                        elapsed_ms,
+                        source_surface = ?source_surface,
+                        source_app_id = ?source_app_id,
+                        source_title = ?source_title,
+                        target_surface = %surface.id(),
+                        target_app_id = ?target_app_id,
+                        target_title = ?target_title,
+                        urgent_only = token_data.user_data.get::<UrgentOnlyMarker>().is_some(),
+                        "xdg-activation request for mapped surface"
+                    );
+                }
                 if token_data.user_data.get::<UrgentOnlyMarker>().is_some() {
                     mapped.set_urgent(true);
                     self.niri.queue_redraw_all();
@@ -833,7 +954,49 @@ impl XdgActivationHandler for State {
                     self.niri.queue_redraw_all();
                 }
             } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(&surface) {
+                if log_xdg_activation {
+                    debug!(
+                        token = token.as_str(),
+                        elapsed_ms,
+                        source_surface = ?source_surface,
+                        source_app_id = ?source_app_id,
+                        source_title = ?source_title,
+                        target_surface = %surface.id(),
+                        target_app_id = ?target_app_id,
+                        target_title = ?target_title,
+                        urgent_only = token_data.user_data.get::<UrgentOnlyMarker>().is_some(),
+                        "xdg-activation request for unmapped surface; storing token data until map"
+                    );
+                }
                 unmapped.activation_token_data = Some(token_data);
+            } else {
+                if log_xdg_activation {
+                    debug!(
+                        token = token.as_str(),
+                        elapsed_ms,
+                        source_surface = ?source_surface,
+                        source_app_id = ?source_app_id,
+                        source_title = ?source_title,
+                        target_surface = %surface.id(),
+                        target_app_id = ?target_app_id,
+                        target_title = ?target_title,
+                        "xdg-activation request targeted an unknown surface"
+                    );
+                }
+            }
+        } else {
+            if log_xdg_activation {
+                debug!(
+                    token = token.as_str(),
+                    elapsed_ms,
+                    source_surface = ?source_surface,
+                    source_app_id = ?source_app_id,
+                    source_title = ?source_title,
+                    target_surface = %surface.id(),
+                    target_app_id = ?target_app_id,
+                    target_title = ?target_title,
+                    "xdg-activation request ignored because the token is stale"
+                );
             }
         }
 

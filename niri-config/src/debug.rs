@@ -22,6 +22,7 @@ pub struct Debug {
     pub disable_monitor_names: bool,
     pub strict_new_window_focus_policy: bool,
     pub honor_xdg_activation_with_invalid_serial: bool,
+    pub log_xdg_activation: bool,
     pub deactivate_unfocused_windows: bool,
     pub skip_cursor_only_updates_during_vrr: bool,
 }
@@ -65,6 +66,8 @@ pub struct DebugPart {
     #[knuffel(child)]
     pub honor_xdg_activation_with_invalid_serial: Option<Flag>,
     #[knuffel(child)]
+    pub log_xdg_activation: Option<Flag>,
+    #[knuffel(child)]
     pub deactivate_unfocused_windows: Option<Flag>,
     #[knuffel(child)]
     pub skip_cursor_only_updates_during_vrr: Option<Flag>,
@@ -89,6 +92,7 @@ impl MergeWith<DebugPart> for Debug {
             disable_monitor_names,
             strict_new_window_focus_policy,
             honor_xdg_activation_with_invalid_serial,
+            log_xdg_activation,
             deactivate_unfocused_windows,
             skip_cursor_only_updates_during_vrr,
         );
