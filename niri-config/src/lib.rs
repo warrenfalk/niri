@@ -2262,6 +2262,7 @@ mod tests {
                 disable_monitor_names: false,
                 strict_new_window_focus_policy: false,
                 honor_xdg_activation_with_invalid_serial: false,
+                log_xdg_activation: false,
                 deactivate_unfocused_windows: false,
                 skip_cursor_only_updates_during_vrr: false,
             },

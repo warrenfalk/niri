@@ -31,6 +31,7 @@ debug {
     disable-monitor-names
     strict-new-window-focus-policy
     honor-xdg-activation-with-invalid-serial
+    log-xdg-activation
     skip-cursor-only-updates-during-vrr
     deactivate-unfocused-windows
 }
@@ -289,6 +290,24 @@ Maybe in the future these apps/toolkits (Electron, Qt) are fixed, making this de
 ```kdl
 debug {
     honor-xdg-activation-with-invalid-serial
+}
+```
+
+### `log-xdg-activation`
+
+<sup>Since: next release</sup>
+
+Logs xdg-activation token creation and activation requests.
+
+This can help diagnose application focus issues, for example notification or tray icon clicks that should activate an existing window but do not.
+The log records whether niri accepted or rejected the token, the source surface that requested the token, and the target surface that requested activation.
+
+Since xdg-activation tokens are short-lived focus-granting capabilities, enable this only temporarily while debugging.
+You can toggle this flag by changing the config and reloading it.
+
+```kdl
+debug {
+    log-xdg-activation
 }
 ```
 
