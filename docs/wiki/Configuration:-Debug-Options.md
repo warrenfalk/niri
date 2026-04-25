@@ -297,10 +297,10 @@ debug {
 
 <sup>Since: next release</sup>
 
-Logs xdg-activation token creation and activation requests.
+Logs xdg-activation token creation, activation requests, and the resulting layout/keyboard focus decisions.
 
 This can help diagnose application focus issues, for example notification or tray icon clicks that should activate an existing window but do not.
-The log records whether niri accepted or rejected the token, the source surface that requested the token, and the target surface that requested activation.
+The log records whether niri accepted or rejected the token, the source surface that requested the token, the target surface that requested activation, the layout focus before and after activation, and any later keyboard-focus decision that differs from the layout focus candidate.
 
 Since xdg-activation tokens are short-lived focus-granting capabilities, enable this only temporarily while debugging.
 You can toggle this flag by changing the config and reloading it.
