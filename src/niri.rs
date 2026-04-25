@@ -99,7 +99,7 @@ use smithay::wayland::session_lock::{LockSurface, SessionLockManagerState, Sessi
 use smithay::wayland::shell::kde::decoration::KdeDecorationState;
 use smithay::wayland::shell::wlr_layer::{self, Layer, WlrLayerShellState};
 use smithay::wayland::shell::xdg::decoration::XdgDecorationState;
-use smithay::wayland::shell::xdg::XdgShellState;
+use smithay::wayland::shell::xdg::{XdgShellState, XdgToplevelSurfaceData};
 use smithay::wayland::shm::ShmState;
 #[cfg(test)]
 use smithay::wayland::single_pixel_buffer::SinglePixelBufferState;
@@ -693,6 +693,16 @@ impl KeyboardFocus {
     }
 }
 
+fn surface_app_id_and_title(surface: &WlSurface) -> (Option<String>, Option<String>) {
+    with_states(surface, |states| {
+        let Some(role) = states.data_map.get::<XdgToplevelSurfaceData>() else {
+            return (None, None);
+        };
+        let role = role.lock().unwrap();
+        (role.app_id.clone(), role.title.clone())
+    })
+}
+
 pub struct State {
     pub backend: Backend,
     pub niri: Niri,
@@ -1245,8 +1255,71 @@ impl State {
             KeyboardFocus::Layout { surface: None }
         };
 
+        let log_xdg_activation = self.niri.config.borrow().debug.log_xdg_activation;
+        let layout_focus_surface = self
+            .niri
+            .layout
+            .focus()
+            .map(|win| win.toplevel().wl_surface().clone());
+        let layout_focus_surface_id = layout_focus_surface
+            .as_ref()
+            .map(|surface| surface.id().to_string());
+        let (layout_focus_app_id, layout_focus_title) = layout_focus_surface
+            .as_ref()
+            .map(surface_app_id_and_title)
+            .unwrap_or((None, None));
+        let old_keyboard_focus_surface = self.niri.keyboard_focus.surface().cloned();
+        let old_keyboard_focus_surface_id = old_keyboard_focus_surface
+            .as_ref()
+            .map(|surface| surface.id().to_string());
+        let (old_keyboard_focus_app_id, old_keyboard_focus_title) = old_keyboard_focus_surface
+            .as_ref()
+            .map(surface_app_id_and_title)
+            .unwrap_or((None, None));
+        let new_keyboard_focus_surface = focus.surface().cloned();
+        let new_keyboard_focus_surface_id = new_keyboard_focus_surface
+            .as_ref()
+            .map(|surface| surface.id().to_string());
+        let (new_keyboard_focus_app_id, new_keyboard_focus_title) = new_keyboard_focus_surface
+            .as_ref()
+            .map(surface_app_id_and_title)
+            .unwrap_or((None, None));
+        let popup_grab_root = self
+            .niri
+            .popup_grab
+            .as_ref()
+            .map(|grab| grab.root.id().to_string());
+        let has_keyboard_grab = self
+            .niri
+            .popup_grab
+            .as_ref()
+            .is_some_and(|grab| grab.has_keyboard_grab);
+        let layer_shell_on_demand_focus = self
+            .niri
+            .layer_shell_on_demand_focus
+            .as_ref()
+            .map(|surface| surface.wl_surface().id().to_string());
         let keyboard = self.niri.seat.get_keyboard().unwrap();
         if self.niri.keyboard_focus != focus {
+            if log_xdg_activation {
+                debug!(
+                    old_keyboard_focus = ?self.niri.keyboard_focus,
+                    old_keyboard_focus_surface = ?old_keyboard_focus_surface_id,
+                    old_keyboard_focus_app_id = ?old_keyboard_focus_app_id,
+                    old_keyboard_focus_title = ?old_keyboard_focus_title,
+                    new_keyboard_focus = ?focus,
+                    new_keyboard_focus_surface = ?new_keyboard_focus_surface_id,
+                    new_keyboard_focus_app_id = ?new_keyboard_focus_app_id,
+                    new_keyboard_focus_title = ?new_keyboard_focus_title,
+                    layout_focus_surface = ?layout_focus_surface_id,
+                    layout_focus_app_id = ?layout_focus_app_id,
+                    layout_focus_title = ?layout_focus_title,
+                    popup_grab_root = ?popup_grab_root,
+                    has_keyboard_grab,
+                    layer_shell_on_demand_focus = ?layer_shell_on_demand_focus,
+                    "keyboard focus changed"
+                );
+            }
             trace!(
                 "keyboard focus changed from {:?} to {:?}",
                 self.niri.keyboard_focus,
@@ -1364,6 +1437,22 @@ impl State {
 
             // FIXME: can be more granular.
             self.niri.queue_redraw_all();
+        } else if log_xdg_activation
+            && self.niri.keyboard_focus.surface() != layout_focus_surface.as_ref()
+        {
+            debug!(
+                keyboard_focus = ?focus,
+                keyboard_focus_surface = ?new_keyboard_focus_surface_id,
+                keyboard_focus_app_id = ?new_keyboard_focus_app_id,
+                keyboard_focus_title = ?new_keyboard_focus_title,
+                layout_focus_surface = ?layout_focus_surface_id,
+                layout_focus_app_id = ?layout_focus_app_id,
+                layout_focus_title = ?layout_focus_title,
+                popup_grab_root = ?popup_grab_root,
+                has_keyboard_grab,
+                layer_shell_on_demand_focus = ?layer_shell_on_demand_focus,
+                "keyboard focus stayed away from the layout focus candidate"
+            );
         }
     }
 

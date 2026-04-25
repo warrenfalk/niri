@@ -949,8 +949,50 @@ impl XdgActivationHandler for State {
                     mapped.set_urgent(true);
                     self.niri.queue_redraw_all();
                 } else {
+                    let layout_focus_before = self
+                        .niri
+                        .layout
+                        .focus()
+                        .map(|win| win.toplevel().wl_surface().clone());
+                    let layout_focus_before_surface = layout_focus_before
+                        .as_ref()
+                        .map(|surface| surface.id().to_string());
+                    let (layout_focus_before_app_id, layout_focus_before_title) =
+                        layout_focus_before
+                            .as_ref()
+                            .map(surface_app_id_and_title)
+                            .unwrap_or((None, None));
                     self.niri.layout.activate_window(&window);
+                    let layout_focus_after = self
+                        .niri
+                        .layout
+                        .focus()
+                        .map(|win| win.toplevel().wl_surface().clone());
+                    let layout_focus_after_surface = layout_focus_after
+                        .as_ref()
+                        .map(|surface| surface.id().to_string());
+                    let (layout_focus_after_app_id, layout_focus_after_title) = layout_focus_after
+                        .as_ref()
+                        .map(surface_app_id_and_title)
+                        .unwrap_or((None, None));
                     self.niri.layer_shell_on_demand_focus = None;
+                    if log_xdg_activation {
+                        debug!(
+                            token = token.as_str(),
+                            elapsed_ms,
+                            target_surface = %surface.id(),
+                            target_app_id = ?target_app_id,
+                            target_title = ?target_title,
+                            layout_focus_before_surface = ?layout_focus_before_surface,
+                            layout_focus_before_app_id = ?layout_focus_before_app_id,
+                            layout_focus_before_title = ?layout_focus_before_title,
+                            layout_focus_after_surface = ?layout_focus_after_surface,
+                            layout_focus_after_app_id = ?layout_focus_after_app_id,
+                            layout_focus_after_title = ?layout_focus_after_title,
+                            keyboard_focus = ?self.niri.keyboard_focus,
+                            "xdg-activation updated the layout focus candidate"
+                        );
+                    }
                     self.niri.queue_redraw_all();
                 }
             } else if let Some(unmapped) = self.niri.unmapped_windows.get_mut(&surface) {
