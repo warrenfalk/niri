@@ -85,6 +85,15 @@ pub enum Request {
     PickWindow,
     /// Request picking a color from the screen.
     PickColor,
+    /// Request a thumbnail image for a window.
+    WindowThumbnail {
+        /// Id of the window to capture.
+        id: u64,
+        /// Maximum width of the returned thumbnail in physical pixels.
+        max_width: u32,
+        /// Maximum height of the returned thumbnail in physical pixels.
+        max_height: u32,
+    },
     /// Perform an action.
     Action(Action),
     /// Change output configuration temporarily.
@@ -159,6 +168,8 @@ pub enum Response {
     PickedWindow(Option<Window>),
     /// Information about the picked color.
     PickedColor(Option<PickedColor>),
+    /// Thumbnail image for a window.
+    WindowThumbnail(WindowThumbnail),
     /// Output configuration change result.
     OutputConfigChanged(OutputConfigChanged),
     /// Information about the overview.
@@ -173,6 +184,20 @@ pub enum Response {
 pub struct Overview {
     /// Whether the overview is currently open.
     pub is_open: bool,
+}
+
+/// Thumbnail image for a window.
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct WindowThumbnail {
+    /// Unique id of the captured window.
+    pub id: u64,
+    /// Width of the thumbnail in physical pixels.
+    pub width: u32,
+    /// Height of the thumbnail in physical pixels.
+    pub height: u32,
+    /// Base64-encoded PNG image data.
+    pub png_base64: String,
 }
 
 /// Color picked from the screen.
@@ -2105,5 +2130,68 @@ mod tests {
         );
         assert!("-".parse::<PositionChange>().is_err());
         assert!("10% ".parse::<PositionChange>().is_err());
+    }
+
+    #[test]
+    fn window_thumbnail_request_json_shape() {
+        let request = Request::WindowThumbnail {
+            id: 12,
+            max_width: 256,
+            max_height: 128,
+        };
+
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "WindowThumbnail": {
+                    "id": 12,
+                    "max_width": 256,
+                    "max_height": 128,
+                }
+            })
+        );
+
+        let request = serde_json::from_value::<Request>(value).unwrap();
+        assert!(matches!(
+            request,
+            Request::WindowThumbnail {
+                id: 12,
+                max_width: 256,
+                max_height: 128,
+            }
+        ));
+    }
+
+    #[test]
+    fn window_thumbnail_response_json_shape() {
+        let response = Response::WindowThumbnail(WindowThumbnail {
+            id: 12,
+            width: 200,
+            height: 100,
+            png_base64: "iVBORw0KGgo=".to_string(),
+        });
+
+        let value = serde_json::to_value(&response).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "WindowThumbnail": {
+                    "id": 12,
+                    "width": 200,
+                    "height": 100,
+                    "png_base64": "iVBORw0KGgo=",
+                }
+            })
+        );
+
+        let response = serde_json::from_value::<Response>(value).unwrap();
+        let Response::WindowThumbnail(thumbnail) = response else {
+            panic!("expected WindowThumbnail response");
+        };
+        assert_eq!(thumbnail.id, 12);
+        assert_eq!(thumbnail.width, 200);
+        assert_eq!(thumbnail.height, 100);
+        assert_eq!(thumbnail.png_base64, "iVBORw0KGgo=");
     }
 }

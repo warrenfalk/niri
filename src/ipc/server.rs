@@ -9,6 +9,8 @@ use std::{env, io, process};
 
 use anyhow::Context;
 use async_channel::{Receiver, Sender, TrySendError};
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::Engine as _;
 use calloop::futures::Scheduler;
 use calloop::io::Async;
 use directories::BaseDirs;
@@ -18,7 +20,7 @@ use niri_config::OutputName;
 use niri_ipc::state::{EventStreamState, EventStreamStatePart as _};
 use niri_ipc::{
     Action, Event, KeyboardLayouts, OutputConfigChanged, Overview, Reply, Request, Response,
-    Timestamp, WindowLayout, Workspace,
+    Timestamp, WindowLayout, WindowThumbnail, Workspace,
 };
 use smithay::desktop::layer_map_for_output;
 use smithay::input::pointer::{
@@ -34,7 +36,7 @@ use crate::backend::IpcOutputMap;
 use crate::input::pick_window_grab::PickWindowGrab;
 use crate::layout::workspace::WorkspaceId;
 use crate::niri::State;
-use crate::utils::{version, with_toplevel_role};
+use crate::utils::{version, with_toplevel_role, write_png_rgba8};
 use crate::window::Mapped;
 
 // If an event stream client fails to read events fast enough that we accumulate more than this
@@ -378,6 +380,26 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
             let color = result.map_err(|_| String::from("error getting picked color"))?;
             Response::PickedColor(color)
         }
+        Request::WindowThumbnail {
+            id,
+            max_width,
+            max_height,
+        } => {
+            if max_width == 0 || max_height == 0 {
+                return Err(String::from("max_width and max_height must be non-zero"));
+            }
+
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let result = make_window_thumbnail(state, id, max_width, max_height);
+                let _ = tx.send_blocking(result);
+            });
+            let result = rx
+                .recv()
+                .await
+                .map_err(|_| String::from("error getting window thumbnail"))?;
+            Response::WindowThumbnail(result?)
+        }
         Request::Action(action) => {
             validate_action(&action)?;
 
@@ -458,6 +480,46 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
     };
 
     Ok(response)
+}
+
+fn make_window_thumbnail(
+    state: &mut State,
+    id: u64,
+    max_width: u32,
+    max_height: u32,
+) -> Result<WindowThumbnail, String> {
+    if state.niri.is_locked() {
+        return Err(String::from("cannot capture window thumbnail while locked"));
+    }
+
+    let niri = &state.niri;
+    let mut windows = niri.layout.windows();
+    let window = windows.find(|(_, mapped)| mapped.id().get() == id);
+    let Some((Some(monitor), mapped)) = window else {
+        return Err(format!(
+            "window not found or not visible on an output: {id}"
+        ));
+    };
+
+    let output = monitor.output();
+    let render = state
+        .backend
+        .with_primary_renderer(|renderer| {
+            niri.render_window_thumbnail(renderer, output, mapped, max_width, max_height)
+        })
+        .ok_or_else(|| String::from("primary renderer is unavailable"))?;
+    let (size, pixels) = render.map_err(|err| format!("{err:?}"))?;
+
+    let mut png = Vec::new();
+    write_png_rgba8(&mut png, size.w as u32, size.h as u32, &pixels)
+        .map_err(|err| format!("error encoding thumbnail as PNG: {err:?}"))?;
+
+    Ok(WindowThumbnail {
+        id,
+        width: size.w as u32,
+        height: size.h as u32,
+        png_base64: BASE64_STANDARD.encode(png),
+    })
 }
 
 fn validate_action(action: &Action) -> Result<(), String> {
