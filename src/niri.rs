@@ -5686,6 +5686,75 @@ impl Niri {
         let _span = tracy_client::span!("Niri::screenshot_window");
 
         let scale = Scale::from(output.current_scale().fractional_scale());
+        let (geo, elements) =
+            self.window_capture_elements(renderer, Some(output), mapped, show_pointer, scale);
+        let elements = elements.iter().rev().map(|elem| {
+            RelocateRenderElement::from_element(elem, geo.loc.upscale(-1), Relocate::Relative)
+        });
+        let pixels = render_to_vec(
+            renderer,
+            geo.size,
+            scale,
+            Transform::Normal,
+            Fourcc::Abgr8888,
+            elements,
+        )?;
+
+        self.save_screenshot(geo.size, pixels, write_to_disk, path)
+            .context("error saving screenshot")
+    }
+
+    pub fn render_window_thumbnail(
+        &self,
+        renderer: &mut GlesRenderer,
+        scale: Scale<f64>,
+        mapped: &Mapped,
+        max_width: u32,
+        max_height: u32,
+    ) -> anyhow::Result<(Size<i32, Physical>, Vec<u8>)> {
+        let _span = tracy_client::span!("Niri::render_window_thumbnail");
+
+        ensure!(max_width > 0, "max_width must be non-zero");
+        ensure!(max_height > 0, "max_height must be non-zero");
+
+        let (geo, elements) = self.window_capture_elements(renderer, None, mapped, false, scale);
+
+        ensure!(
+            geo.size.w > 0 && geo.size.h > 0,
+            "window has no renderable contents"
+        );
+
+        let (thumbnail_scale, size) =
+            window_thumbnail_scale_and_size(geo.size, max_width, max_height)?;
+
+        let elements = elements.iter().rev().map(|elem| {
+            let elem =
+                RelocateRenderElement::from_element(elem, geo.loc.upscale(-1), Relocate::Relative);
+            RescaleRenderElement::from_element(elem, Point::from((0, 0)), thumbnail_scale)
+        });
+        let pixels = render_to_vec(
+            renderer,
+            size,
+            scale,
+            Transform::Normal,
+            Fourcc::Abgr8888,
+            elements,
+        )?;
+
+        Ok((size, pixels))
+    }
+
+    fn window_capture_elements(
+        &self,
+        renderer: &mut GlesRenderer,
+        output: Option<&Output>,
+        mapped: &Mapped,
+        show_pointer: bool,
+        scale: Scale<f64>,
+    ) -> (
+        Rectangle<i32, Physical>,
+        Vec<WindowScreenshotRenderElement<GlesRenderer>>,
+    ) {
         let alpha =
             if mapped.sizing_mode().is_fullscreen() || mapped.is_ignoring_opacity_window_rule() {
                 1.
@@ -5697,7 +5766,9 @@ impl Niri {
 
         // Add pointer if requested and it's over this window.
         if show_pointer {
-            if let Some((_, win_pos)) = self.pointer_pos_for_window_cast(mapped) {
+            if let Some((output, (_, win_pos))) =
+                output.zip(self.pointer_pos_for_window_cast(mapped))
+            {
                 // Pointer elements are at output-local physical coords.
                 // Relocate by -win_pos to make them window-relative.
                 let pos = win_pos.to_physical_precise_round(scale).upscale(-1);
@@ -5726,20 +5797,7 @@ impl Niri {
         // The pointer is not included in encompassing_geo because we don't want it to expand the
         // screenshot size.
         let geo = encompassing_geo(scale, elements.iter().skip(pointer_count));
-        let elements = elements.iter().rev().map(|elem| {
-            RelocateRenderElement::from_element(elem, geo.loc.upscale(-1), Relocate::Relative)
-        });
-        let pixels = render_to_vec(
-            renderer,
-            geo.size,
-            scale,
-            Transform::Normal,
-            Fourcc::Abgr8888,
-            elements,
-        )?;
-
-        self.save_screenshot(geo.size, pixels, write_to_disk, path)
-            .context("error saving screenshot")
+        (geo, elements)
     }
 
     pub fn save_screenshot(
@@ -6561,6 +6619,39 @@ impl Niri {
     }
 }
 
+pub(crate) fn window_thumbnail_capture_scale(
+    window_output_scale: Option<f64>,
+    active_output_scale: Option<f64>,
+) -> Scale<f64> {
+    Scale::from(window_output_scale.or(active_output_scale).unwrap_or(1.))
+}
+
+fn window_thumbnail_scale_and_size(
+    window_size: Size<i32, Physical>,
+    max_width: u32,
+    max_height: u32,
+) -> anyhow::Result<(f64, Size<i32, Physical>)> {
+    ensure!(max_width > 0, "max_width must be non-zero");
+    ensure!(max_height > 0, "max_height must be non-zero");
+    ensure!(
+        window_size.w > 0 && window_size.h > 0,
+        "window has no renderable contents"
+    );
+
+    let thumbnail_scale = f64::min(
+        max_width as f64 / window_size.w as f64,
+        max_height as f64 / window_size.h as f64,
+    )
+    .min(1.);
+
+    let size = Size::from((
+        ((window_size.w as f64 * thumbnail_scale).round() as i32).max(1),
+        ((window_size.h as f64 * thumbnail_scale).round() as i32).max(1),
+    ));
+
+    Ok((thumbnail_scale, size))
+}
+
 pub struct NewClient {
     pub client: UnixStream,
     pub restricted: bool,
@@ -6628,5 +6719,71 @@ niri_render_elements! {
         Texture = PrimaryGpuTextureRenderElement,
         // Used for the CPU-rendered panels.
         RelocatedMemoryBuffer = RelocateRenderElement<MemoryRenderBufferRenderElement<R>>,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn window_thumbnail_capture_scale_prefers_window_output() {
+        assert_eq!(
+            window_thumbnail_capture_scale(Some(1.5), Some(2.0)),
+            Scale::from(1.5)
+        );
+    }
+
+    #[test]
+    fn window_thumbnail_capture_scale_falls_back_to_active_output() {
+        assert_eq!(
+            window_thumbnail_capture_scale(None, Some(2.0)),
+            Scale::from(2.0)
+        );
+    }
+
+    #[test]
+    fn window_thumbnail_capture_scale_falls_back_to_one() {
+        assert_eq!(window_thumbnail_capture_scale(None, None), Scale::from(1.0));
+    }
+
+    #[test]
+    fn window_thumbnail_size_fits_requested_bounds() {
+        assert_eq!(
+            window_thumbnail_scale_and_size(Size::from((800, 600)), 200, 200)
+                .unwrap()
+                .1,
+            Size::from((200, 150))
+        );
+        assert_eq!(
+            window_thumbnail_scale_and_size(Size::from((800, 600)), 500, 100)
+                .unwrap()
+                .1,
+            Size::from((133, 100))
+        );
+        assert_eq!(
+            window_thumbnail_scale_and_size(Size::from((600, 800)), 100, 500)
+                .unwrap()
+                .1,
+            Size::from((100, 133))
+        );
+    }
+
+    #[test]
+    fn window_thumbnail_size_does_not_upscale() {
+        assert_eq!(
+            window_thumbnail_scale_and_size(Size::from((120, 80)), 500, 500)
+                .unwrap()
+                .1,
+            Size::from((120, 80))
+        );
+    }
+
+    #[test]
+    fn window_thumbnail_size_rejects_invalid_inputs() {
+        assert!(window_thumbnail_scale_and_size(Size::from((120, 80)), 0, 100).is_err());
+        assert!(window_thumbnail_scale_and_size(Size::from((120, 80)), 100, 0).is_err());
+        assert!(window_thumbnail_scale_and_size(Size::from((0, 80)), 100, 100).is_err());
+        assert!(window_thumbnail_scale_and_size(Size::from((120, 0)), 100, 100).is_err());
     }
 }
