@@ -75,7 +75,7 @@ use smithay::{
 
 pub use crate::handlers::xdg_shell::KdeDecorationsModeState;
 use crate::layout::workspace::WorkspaceId;
-use crate::layout::ActivateWindow;
+use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{DndIcon, NewClient, State};
 use crate::protocols::ext_workspace::{self, ExtWorkspaceHandler, ExtWorkspaceManagerState};
 use crate::protocols::foreign_toplevel::{
@@ -945,7 +945,10 @@ impl XdgActivationHandler for State {
                         "xdg-activation request for mapped surface"
                     );
                 }
-                if token_data.user_data.get::<UrgentOnlyMarker>().is_some() {
+                let urgent_only = token_data.user_data.get::<UrgentOnlyMarker>().is_some();
+                let honor_urgent_only =
+                    mapped.rules().honor_xdg_activation_without_serial == Some(true);
+                if urgent_only && !honor_urgent_only {
                     mapped.set_urgent(true);
                     self.niri.queue_redraw_all();
                 } else {
@@ -983,6 +986,8 @@ impl XdgActivationHandler for State {
                             target_surface = %surface.id(),
                             target_app_id = ?target_app_id,
                             target_title = ?target_title,
+                            urgent_only,
+                            honor_urgent_only,
                             layout_focus_before_surface = ?layout_focus_before_surface,
                             layout_focus_before_app_id = ?layout_focus_before_app_id,
                             layout_focus_before_title = ?layout_focus_before_title,

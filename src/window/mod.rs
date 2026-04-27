@@ -73,6 +73,9 @@ pub struct ResolvedWindowRules {
     /// Whether the window should open focused.
     pub open_focused: Option<bool>,
 
+    /// Whether to honor xdg-activation requests with tokens created without serials.
+    pub honor_xdg_activation_without_serial: Option<bool>,
+
     /// Extra bound on the minimum window width.
     pub min_width: Option<u16>,
     /// Extra bound on the minimum window height.
@@ -255,6 +258,9 @@ impl ResolvedWindowRules {
 
                 if let Some(x) = rule.open_focused {
                     resolved.open_focused = Some(x);
+                }
+                if let Some(x) = rule.honor_xdg_activation_without_serial {
+                    resolved.honor_xdg_activation_without_serial = Some(x);
                 }
 
                 if let Some(x) = rule.min_width {
