@@ -6,6 +6,7 @@ use wayland_client::protocol::wl_surface::WlSurface as ClientWlSurface;
 
 use super::client::LayerConfigureProps;
 use super::*;
+use crate::layout::LayoutElement as _;
 use crate::niri::KeyboardFocus;
 use crate::utils::with_toplevel_role;
 
@@ -30,6 +31,29 @@ fn map_window(
     surface
 }
 
+fn map_window_with_app_id(
+    f: &mut Fixture,
+    id: client::ClientId,
+    title: &str,
+    app_id: &str,
+    size: (u16, u16),
+) -> ClientWlSurface {
+    let window = f.client(id).create_window();
+    let surface = window.surface.clone();
+    window.set_title(title);
+    window.set_app_id(app_id);
+    window.commit();
+    f.roundtrip(id);
+
+    let window = f.client(id).window(&surface);
+    window.attach_new_buffer();
+    window.set_size(size.0, size.1);
+    window.ack_last_and_commit();
+    f.double_roundtrip(id);
+
+    surface
+}
+
 fn set_up_two_windows() -> (Fixture, client::ClientId, ClientWlSurface, ClientWlSurface) {
     let mut f = Fixture::new();
     f.add_output(1, (1920, 1080));
@@ -37,6 +61,19 @@ fn set_up_two_windows() -> (Fixture, client::ClientId, ClientWlSurface, ClientWl
     let id = f.add_client();
     let first = map_window(&mut f, id, "first", (100, 100));
     let second = map_window(&mut f, id, "second", (120, 120));
+
+    (f, id, first, second)
+}
+
+fn set_up_two_windows_with_serialless_rule(
+    rule: &str,
+) -> (Fixture, client::ClientId, ClientWlSurface, ClientWlSurface) {
+    let mut f = Fixture::with_config(niri_config::Config::parse_mem(rule).unwrap());
+    f.add_output(1, (1920, 1080));
+
+    let id = f.add_client();
+    let first = map_window_with_app_id(&mut f, id, "first", "test-target", (100, 100));
+    let second = map_window_with_app_id(&mut f, id, "second", "other", (120, 120));
 
     (f, id, first, second)
 }
@@ -84,6 +121,32 @@ fn simulate_mapped_window_activation(f: &mut Fixture, title: &str) {
     let niri = f.niri();
     niri.layout.activate_window(&target);
     niri.layer_shell_on_demand_focus = None;
+}
+
+fn simulate_serialless_mapped_window_activation(f: &mut Fixture, title: &str) {
+    let (target, target_surface, honor_serialless_activation) = {
+        let mapped = mapped_window_by_title(f, title);
+        (
+            mapped.window.clone(),
+            mapped.toplevel().wl_surface().clone(),
+            mapped.rules().honor_xdg_activation_without_serial == Some(true),
+        )
+    };
+
+    if honor_serialless_activation {
+        let niri = f.niri();
+        niri.layout.activate_window(&target);
+        niri.layer_shell_on_demand_focus = None;
+    } else {
+        let niri = f.niri();
+        let mapped = niri
+            .layout
+            .find_window_and_output_mut(&target_surface)
+            .unwrap()
+            .0;
+        mapped.set_urgent(true);
+        niri.queue_redraw_all();
+    }
 }
 
 fn layout_focus_title(f: &mut Fixture) -> String {
@@ -155,4 +218,56 @@ fn mapped_activation_can_leave_keyboard_focus_on_exclusive_layer_shell() {
     ));
     assert!(!mapped_window_by_title(&mut f, "first").is_focused());
     assert_eq!(f.client(id).window(&first).format_recent_configures(), "");
+}
+
+#[test]
+fn serialless_mapped_activation_is_urgency_only_by_default() {
+    let (mut f, id, first, _second) = set_up_two_windows_with_serialless_rule("");
+
+    assert_eq!(layout_focus_title(&mut f), "second");
+    assert_eq!(
+        keyboard_focus_layout_title(&mut f).as_deref(),
+        Some("second")
+    );
+
+    let _ = f.client(id).window(&first).format_recent_configures();
+    simulate_serialless_mapped_window_activation(&mut f, "first");
+    f.double_roundtrip(id);
+
+    assert_eq!(layout_focus_title(&mut f), "second");
+    assert_eq!(
+        keyboard_focus_layout_title(&mut f).as_deref(),
+        Some("second")
+    );
+    assert!(mapped_window_by_title(&mut f, "first").is_urgent());
+    assert_eq!(f.client(id).window(&first).format_recent_configures(), "");
+}
+
+#[test]
+fn serialless_mapped_activation_can_be_honored_by_window_rule() {
+    let (mut f, id, first, _second) = set_up_two_windows_with_serialless_rule(
+        r#"
+        window-rule {
+            match app-id="^test-target$"
+            honor-xdg-activation-without-serial true
+        }
+        "#,
+    );
+
+    assert_eq!(layout_focus_title(&mut f), "second");
+    assert_eq!(
+        keyboard_focus_layout_title(&mut f).as_deref(),
+        Some("second")
+    );
+
+    let _ = f.client(id).window(&first).format_recent_configures();
+    simulate_serialless_mapped_window_activation(&mut f, "first");
+    f.double_roundtrip(id);
+
+    assert_eq!(layout_focus_title(&mut f), "first");
+    assert_eq!(
+        keyboard_focus_layout_title(&mut f).as_deref(),
+        Some("first")
+    );
+    assert!(mapped_window_by_title(&mut f, "first").is_focused());
 }

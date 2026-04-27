@@ -888,6 +888,7 @@ mod tests {
                 open-fullscreen false
                 open-floating false
                 open-focused true
+                honor-xdg-activation-without-serial true
                 default-window-height { fixed 500; }
                 default-column-display "tabbed"
                 default-floating-position x=100 y=-200 relative-to="bottom-left"
@@ -1798,6 +1799,9 @@ mod tests {
                         false,
                     ),
                     open_focused: Some(
+                        true,
+                    ),
+                    honor_xdg_activation_without_serial: Some(
                         true,
                     ),
                     min_width: None,

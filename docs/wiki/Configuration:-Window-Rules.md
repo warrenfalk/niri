@@ -48,6 +48,7 @@ window-rule {
     open-fullscreen true
     open-floating true
     open-focused false
+    honor-xdg-activation-without-serial true
 
     // Properties that apply continuously.
     draw-border-with-background false
@@ -527,6 +528,24 @@ window-rule {
     match app-id=r#"^org\.keepassxc\.KeePassXC$"# title="^Unlock Database - KeePassXC$"
 
     open-focused true
+}
+```
+
+#### `honor-xdg-activation-without-serial`
+
+<sup>Since: next release</sup>
+
+Allows matching windows to be focused by xdg-activation requests whose tokens were created without a Wayland input serial.
+By default, niri treats such requests as urgency-only and will not focus the target window.
+
+This is intended as a narrow compatibility workaround for apps that ignore a valid activation token from a notification daemon and create a new serialless token instead.
+
+```kdl
+// Let Slack focus itself from notification clicks even when it creates a serialless activation token.
+window-rule {
+    match app-id="^Slack$"
+
+    honor-xdg-activation-without-serial true
 }
 ```
 
