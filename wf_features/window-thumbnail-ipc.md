@@ -6,7 +6,7 @@ launchers, switchers, dashboards, or other trusted local tools that want a small
 preview of a specific window without starting a full screencopy session.
 
 This is a V1 interface and intentionally has no per-client authorization model.
-Any process that can connect to `$NIRI_SOCKET` can ask for thumbnails of visible
+Any process that can connect to `$NIRI_SOCKET` can ask for thumbnails of mapped
 windows by id. The compositor does reject requests while locked, but this should
 not be treated as a privacy boundary.
 
@@ -22,8 +22,11 @@ The request is a `Request::WindowThumbnail` JSON object:
 - `max_width` and `max_height` are physical-pixel bounds. Both must be non-zero.
 - The returned image preserves the window aspect ratio and does not upscale the
   window if it is already smaller than the requested bounds.
-- The V1 implementation only captures windows that are mapped and visible on an
-  output.
+- The V1.1 implementation captures any mapped window. If a window is not
+  currently associated with an output, niri renders its last committed buffers
+  with the active output scale, or scale `1.0` if no output is active.
+- V1.1 does not force hidden or off-output clients to repaint. Live repainting
+  is a separate future feature.
 
 Successful replies contain a `Response::WindowThumbnail`:
 
@@ -55,15 +58,17 @@ The renderer should:
 
 1. Find the mapped window by niri window id.
 2. Refuse capture while the session is locked.
-3. Compute a thumbnail size that fits inside the requested bounds without
+3. Select a capture scale from the window's output, then the active output, then
+   scale `1.0`.
+4. Compute a thumbnail size that fits inside the requested bounds without
    upscaling.
-4. Render the window elements into an offscreen pixel buffer.
-5. Encode the buffer as PNG and return it as base64 through IPC.
+5. Render the window elements into an offscreen pixel buffer.
+6. Encode the buffer as PNG and return it as base64 through IPC.
 
 Keep tests with the feature commit. The current coverage locks down the JSON
-contract in `niri-ipc` and the thumbnail size/validation logic in `src/niri.rs`.
-If the rendering path changes later, add focused tests around whatever pure
-logic or state boundary protects the behavior.
+contract in `niri-ipc` and the thumbnail scale, size, and validation logic in
+`src/niri.rs`. If the rendering path changes later, add focused tests around
+whatever pure logic or state boundary protects the behavior.
 
 ## Usage
 

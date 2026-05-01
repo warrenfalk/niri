@@ -35,7 +35,7 @@ use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer};
 use crate::backend::IpcOutputMap;
 use crate::input::pick_window_grab::PickWindowGrab;
 use crate::layout::workspace::WorkspaceId;
-use crate::niri::State;
+use crate::niri::{window_thumbnail_capture_scale, State};
 use crate::utils::{version, with_toplevel_role, write_png_rgba8};
 use crate::window::Mapped;
 
@@ -495,17 +495,22 @@ fn make_window_thumbnail(
     let niri = &state.niri;
     let mut windows = niri.layout.windows();
     let window = windows.find(|(_, mapped)| mapped.id().get() == id);
-    let Some((Some(monitor), mapped)) = window else {
-        return Err(format!(
-            "window not found or not visible on an output: {id}"
-        ));
+    let Some((monitor, mapped)) = window else {
+        return Err(format!("window not found or not mapped: {id}"));
     };
 
-    let output = monitor.output();
+    let window_output_scale =
+        monitor.map(|monitor| monitor.output().current_scale().fractional_scale());
+    let active_output_scale = niri
+        .layout
+        .active_output()
+        .map(|output| output.current_scale().fractional_scale());
+    let scale = window_thumbnail_capture_scale(window_output_scale, active_output_scale);
+
     let render = state
         .backend
         .with_primary_renderer(|renderer| {
-            niri.render_window_thumbnail(renderer, output, mapped, max_width, max_height)
+            niri.render_window_thumbnail(renderer, scale, mapped, max_width, max_height)
         })
         .ok_or_else(|| String::from("primary renderer is unavailable"))?;
     let (size, pixels) = render.map_err(|err| format!("{err:?}"))?;
