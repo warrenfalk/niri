@@ -11,11 +11,13 @@ fn create_thumbnail() -> Thumbnail {
         on_current_workspace: false,
         app_id: None,
         size: Size::new(100, 100),
+        workspace_label: String::from("Workspace 1"),
         clock: Clock::with_time(Duration::ZERO),
         config: niri_config::MruPreviews::default(),
         open_animation: None,
         move_animation: None,
         title_texture: Default::default(),
+        workspace_label_texture: Default::default(),
         background: RefCell::new(FocusRing::new(Default::default())),
         border: RefCell::new(FocusRing::new(Default::default())),
     }
@@ -35,6 +37,15 @@ fn remove_last_window_out_of_two() {
     };
 
     check_ops(&mut mru, &ops);
+}
+
+#[test]
+fn workspace_labels_include_one_based_index_and_name() {
+    assert_eq!(format_workspace_label(0, None), "Workspace 1");
+    assert_eq!(
+        format_workspace_label(2, Some("browser")),
+        "Workspace 3: browser"
+    );
 }
 
 fn arbitrary_scope() -> impl Strategy<Value = MruScope> {
