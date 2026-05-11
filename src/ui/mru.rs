@@ -25,7 +25,8 @@ use smithay::utils::{Logical, Point, Rectangle, Scale, Size, Transform};
 
 use crate::animation::{Animation, Clock};
 use crate::layout::focus_ring::{FocusRing, FocusRingRenderElement};
-use crate::layout::{Layout, LayoutElement as _, LayoutElementRenderElement};
+use crate::layout::workspace::Workspace;
+use crate::layout::{Layout, LayoutElement, LayoutElementRenderElement};
 use crate::niri::Niri;
 use crate::niri_render_elements;
 use crate::render_helpers::border::BorderRenderElement;
@@ -56,6 +57,9 @@ const BORDER: f64 = 2.;
 /// Gap from the window preview to the window title.
 const TITLE_GAP: f64 = 14.;
 
+/// Gap from the workspace label to the window preview.
+const WORKSPACE_LABEL_GAP: f64 = 10.;
+
 /// Gap between thumbnails.
 const GAP: f64 = 16.;
 
@@ -73,6 +77,9 @@ const BACKDROP_COLOR: Color32F = Color32F::new(0., 0., 0., 0.8);
 
 /// Font used to render the window titles.
 const FONT: &str = "sans 14px";
+
+/// Font used to render workspace labels.
+const WORKSPACE_LABEL_FONT: &str = "sans 12px";
 
 /// Scopes in the order they are cycled through.
 ///
@@ -187,10 +194,10 @@ struct MoveAnimation {
 
 type MruTexture = TextureBuffer<GlesTexture>;
 
-/// Cached title texture.
+/// Cached text texture.
 #[derive(Debug, Default)]
-struct TitleTexture {
-    title: String,
+struct CachedTextTexture {
+    text: String,
     scale: f64,
     texture: Option<Option<MruTexture>>,
 }
@@ -220,17 +227,26 @@ struct Thumbnail {
     /// Cached size of the window.
     size: Size<i32, Logical>,
 
+    /// Workspace label to render above the window.
+    workspace_label: String,
+
     clock: Clock,
     config: niri_config::MruPreviews,
     open_animation: Option<Animation>,
     move_animation: Option<MoveAnimation>,
-    title_texture: RefCell<TitleTexture>,
+    title_texture: RefCell<CachedTextTexture>,
+    workspace_label_texture: RefCell<CachedTextTexture>,
     background: RefCell<FocusRing>,
     border: RefCell<FocusRing>,
 }
 
 impl Thumbnail {
-    fn from_mapped(mapped: &Mapped, clock: Clock, config: niri_config::MruPreviews) -> Self {
+    fn from_mapped(
+        mapped: &Mapped,
+        clock: Clock,
+        config: niri_config::MruPreviews,
+        workspace_label: String,
+    ) -> Self {
         let app_id = with_toplevel_role(mapped.toplevel(), |role| role.app_id.clone());
 
         let background = FocusRing::new(niri_config::FocusRing {
@@ -252,11 +268,13 @@ impl Thumbnail {
             on_current_workspace: false,
             app_id,
             size: mapped.size(),
+            workspace_label,
             clock,
             config,
             open_animation: None,
             move_animation: None,
             title_texture: Default::default(),
+            workspace_label_texture: Default::default(),
             background: RefCell::new(background),
             border: RefCell::new(border),
         }
@@ -302,6 +320,17 @@ impl Thumbnail {
         self.size = mapped.size();
     }
 
+    fn update_workspace(
+        &mut self,
+        workspace_label: String,
+        on_current_output: bool,
+        on_current_workspace: bool,
+    ) {
+        self.workspace_label = workspace_label;
+        self.on_current_output = on_current_output;
+        self.on_current_workspace = on_current_workspace;
+    }
+
     fn preview_size(&self, output_size: Size<f64, Logical>, scale: f64) -> Size<f64, Logical> {
         let max_height = f64::max(1., self.config.max_height);
         let max_scale = f64::max(0.001, self.config.max_scale);
@@ -329,10 +358,26 @@ impl Thumbnail {
         scale: f64,
     ) -> Option<MruTexture> {
         with_toplevel_role(mapped.toplevel(), |role| {
-            role.title
-                .as_ref()
-                .and_then(|title| self.title_texture.borrow_mut().get(renderer, title, scale))
+            role.title.as_ref().and_then(|title| {
+                self.title_texture
+                    .borrow_mut()
+                    .get(renderer, title, scale, FONT, (1., 1., 1.))
+            })
         })
+    }
+
+    fn workspace_label_texture(
+        &self,
+        renderer: &mut GlesRenderer,
+        scale: f64,
+    ) -> Option<MruTexture> {
+        self.workspace_label_texture.borrow_mut().get(
+            renderer,
+            &self.workspace_label,
+            scale,
+            WORKSPACE_LABEL_FONT,
+            (0.8, 0.8, 0.8),
+        )
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -352,6 +397,7 @@ impl Thumbnail {
         let round = move |logical: f64| round_logical_in_physical(scale, logical);
         let padding = round(config.highlight.padding);
         let title_gap = round(TITLE_GAP);
+        let workspace_label_gap = round(WORKSPACE_LABEL_GAP);
 
         let s = Scale::from(scale);
 
@@ -454,6 +500,50 @@ impl Thumbnail {
             push(elem)
         });
 
+        let mut workspace_label_size = None;
+        let workspace_label_texture = self.workspace_label_texture(ctx.as_gles().renderer, scale);
+        let workspace_label_texture = workspace_label_texture.map(|texture| {
+            let mut size = texture.logical_size();
+            size.w = f64::min(size.w, preview_geo.size.w);
+            workspace_label_size = Some(size);
+            (texture, size)
+        });
+
+        // Hide text labels for blocked-out windows, but only after computing their sizes. This
+        // way, the background and the border won't have to oscillate in size between normal and
+        // screencast renders, causing excessive damage.
+        let should_block_out = ctx.target.should_block_out(mapped.rules().block_out_from);
+        let workspace_label_texture = workspace_label_texture.filter(|_| !should_block_out);
+
+        if let Some((texture, size)) = workspace_label_texture {
+            // Clip from the right if it doesn't fit.
+            let src = Rectangle::from_size(size);
+
+            let loc = preview_geo.loc
+                + Point::new(
+                    (preview_geo.size.w - size.w) / 2.,
+                    -workspace_label_gap - size.h,
+                );
+            let loc = loc.to_physical_precise_round(scale).to_logical(scale);
+            let texture = TextureRenderElement::from_texture_buffer(
+                texture,
+                loc,
+                preview_alpha,
+                Some(src),
+                None,
+                Kind::Unspecified,
+            );
+
+            let ctx = ctx.as_gles();
+            if let Some(program) = GradientFadeTextureRenderElement::shader(ctx.renderer) {
+                let elem = GradientFadeTextureRenderElement::new(texture, program);
+                push(WindowMruUiRenderElement::GradientFadeElem(elem));
+            } else {
+                let elem = PrimaryGpuTextureRenderElement(texture);
+                push(WindowMruUiRenderElement::TextureElement(elem));
+            }
+        }
+
         let mut title_size = None;
         let title_texture = self.title_texture(ctx.as_gles().renderer, mapped, scale);
         let title_texture = title_texture.map(|texture| {
@@ -463,10 +553,6 @@ impl Thumbnail {
             (texture, size)
         });
 
-        // Hide title for blocked-out windows, but only after computing the title size. This way,
-        // the background and the border won't have to oscillate in size between normal and
-        // screencast renders, causing excessive damage.
-        let should_block_out = ctx.target.should_block_out(mapped.rules().block_out_from);
         let title_texture = title_texture.filter(|_| !should_block_out);
 
         if let Some((texture, size)) = title_texture {
@@ -503,7 +589,14 @@ impl Thumbnail {
             let padding = Point::new(padding, padding);
 
             let mut size = preview_geo.size;
+            let mut loc = preview_geo.loc;
             size += padding.to_size().upscale(2.);
+
+            if let Some(workspace_label_size) = workspace_label_size {
+                let height = workspace_label_gap + workspace_label_size.h;
+                loc.y -= height;
+                size.h += height;
+            }
 
             if let Some(title_size) = title_size {
                 size.h += title_gap + title_size.h;
@@ -523,7 +616,7 @@ impl Thumbnail {
 
             let radius = CornerRadius::from(config.highlight.corner_radius as f32);
 
-            let loc = preview_geo.loc - padding;
+            let loc = loc - padding;
 
             let mut background = self.background.borrow_mut();
             let mut config = *background.config();
@@ -585,9 +678,15 @@ impl WindowMru {
             let mon = mon.expect("an active output exists so all workspaces have a monitor");
             let on_current_output = mon.output() == output;
             let on_current_workspace = on_current_output && mon.active_workspace_idx() == ws_idx;
+            let workspace_label = make_workspace_label(ws_idx, ws);
 
             for mapped in ws.windows() {
-                let mut thumbnail = Thumbnail::from_mapped(mapped, niri.clock.clone(), config);
+                let mut thumbnail = Thumbnail::from_mapped(
+                    mapped,
+                    niri.clock.clone(),
+                    config,
+                    workspace_label.clone(),
+                );
                 thumbnail.on_current_output = on_current_output;
                 thumbnail.on_current_workspace = on_current_workspace;
                 thumbnails.push(thumbnail);
@@ -842,6 +941,44 @@ fn matches(scope: MruScope, app_id_filter: Option<&str>, thumbnail: &Thumbnail) 
 
 fn match_filter(scope: MruScope, app_id_filter: Option<&str>) -> impl Fn(&Thumbnail) -> bool + '_ {
     move |thumbnail| matches(scope, app_id_filter, thumbnail)
+}
+
+fn make_workspace_label<W: LayoutElement>(ws_idx: usize, ws: &Workspace<W>) -> String {
+    format_workspace_label(ws_idx, ws.name().map(String::as_str))
+}
+
+fn format_workspace_label(ws_idx: usize, name: Option<&str>) -> String {
+    let mut label = format!("Workspace {}", ws_idx + 1);
+    if let Some(name) = name {
+        label.push_str(": ");
+        label.push_str(name);
+    }
+    label
+}
+
+fn find_thumbnail_workspace<'a>(
+    layout: &'a Layout<Mapped>,
+    output: &Output,
+    id: MappedId,
+) -> Option<(&'a Mapped, bool, bool, String)> {
+    for (mon, ws_idx, ws) in layout.workspaces() {
+        let Some(mapped) = ws.windows().find(|mapped| mapped.id() == id) else {
+            continue;
+        };
+
+        let on_current_output = mon.is_some_and(|mon| mon.output() == output);
+        let on_current_workspace =
+            on_current_output && mon.is_some_and(|mon| mon.active_workspace_idx() == ws_idx);
+
+        return Some((
+            mapped,
+            on_current_output,
+            on_current_workspace,
+            make_workspace_label(ws_idx, ws),
+        ));
+    }
+
+    None
 }
 
 impl ViewPos {
@@ -1348,12 +1485,15 @@ impl Inner {
             return;
         };
 
-        let Some((_, mapped)) = layout.windows().find(|(_, m)| m.id() == id) else {
+        let Some((mapped, on_current_output, on_current_workspace, workspace_label)) =
+            find_thumbnail_workspace(layout, &self.output, id)
+        else {
             error!("window in the MRU must be present in the layout");
             return;
         };
 
         thumbnail.update_window(mapped);
+        thumbnail.update_workspace(workspace_label, on_current_output, on_current_workspace);
 
         if let Some(prev) = prev_size {
             let new = thumbnail.preview_size(output_size, scale);
@@ -1607,6 +1747,7 @@ impl Inner {
         let padding = round(padding) + round(BORDER);
         let padding = Point::new(padding, padding);
         let title_gap = round(TITLE_GAP);
+        let workspace_label_gap = round(WORKSPACE_LABEL_GAP);
 
         for (thumbnail, mut geo) in self.thumbnails_in_view_static() {
             geo.loc -= padding;
@@ -1622,6 +1763,13 @@ impl Inner {
                 geo.size.h -= round(padding.y / 2.);
             }
 
+            if let Some(texture) = thumbnail.workspace_label_texture.borrow().get_stale() {
+                let workspace_label_size = texture.logical_size();
+                let height = workspace_label_gap + workspace_label_size.h;
+                geo.loc.y -= height;
+                geo.size.h += height;
+            }
+
             if geo.contains(pos) {
                 return Some(thumbnail.id);
             }
@@ -1631,16 +1779,23 @@ impl Inner {
     }
 }
 
-impl TitleTexture {
-    fn get(&mut self, renderer: &mut GlesRenderer, title: &str, scale: f64) -> Option<MruTexture> {
-        if self.title != title || self.scale != scale {
+impl CachedTextTexture {
+    fn get(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        text: &str,
+        scale: f64,
+        font: &str,
+        color: (f64, f64, f64),
+    ) -> Option<MruTexture> {
+        if self.text != text || self.scale != scale {
             self.texture = None;
-            self.title = title.to_owned();
+            self.text = text.to_owned();
             self.scale = scale;
         }
 
         self.texture
-            .get_or_insert_with(|| generate_title_texture(renderer, title, scale).ok())
+            .get_or_insert_with(|| generate_text_texture(renderer, text, scale, font, color).ok())
             .clone()
     }
 
@@ -1653,14 +1808,16 @@ impl TitleTexture {
     }
 }
 
-fn generate_title_texture(
+fn generate_text_texture(
     renderer: &mut GlesRenderer,
-    title: &str,
+    text: &str,
     scale: f64,
+    font: &str,
+    color: (f64, f64, f64),
 ) -> anyhow::Result<MruTexture> {
-    let _span = tracy_client::span!("mru::generate_title_texture");
+    let _span = tracy_client::span!("mru::generate_text_texture");
 
-    let mut font = FontDescription::from_string(FONT);
+    let mut font = FontDescription::from_string(font);
     font.set_absolute_size(to_physical_precise_round(scale, font.size()));
 
     let surface = ImageSurface::create(cairo::Format::ARgb32, 0, 0)?;
@@ -1671,18 +1828,18 @@ fn generate_title_texture(
     // No use rendering it as multiple lines.
     layout.set_single_paragraph_mode(true);
     layout.set_font_description(Some(&font));
-    layout.set_text(title);
+    layout.set_text(text);
 
     let (width, height) = layout.pixel_size();
     ensure!(width > 0 && height > 0);
 
-    // Guard against overly long window titles.
+    // Guard against overly long text labels.
     let width = min(width, 16383);
     let height = min(height, 16383);
 
     let surface = ImageSurface::create(cairo::Format::ARgb32, width, height)?;
     let cr = cairo::Context::new(&surface)?;
-    cr.set_source_rgb(1., 1., 1.);
+    cr.set_source_rgb(color.0, color.1, color.2);
     pangocairo::functions::show_layout(&cr, &layout);
 
     drop(cr);
