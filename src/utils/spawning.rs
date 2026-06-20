@@ -13,6 +13,15 @@ use smithay::wayland::xdg_activation::XdgActivationToken;
 
 use crate::utils::expand_home;
 
+pub const LAUNCHED_FROM_WORKSPACE_ENV: &str = "NIRI_LAUNCHED_FROM_WORKSPACE";
+pub const LAUNCHED_FROM_WORKSPACE_ID_ENV: &str = "NIRI_LAUNCHED_FROM_WORKSPACE_ID";
+
+#[derive(Debug, Clone)]
+pub struct LaunchedFromWorkspace {
+    pub id: u64,
+    pub name: Option<String>,
+}
+
 pub static REMOVE_ENV_RUST_BACKTRACE: AtomicBool = AtomicBool::new(false);
 pub static REMOVE_ENV_RUST_LIB_BACKTRACE: AtomicBool = AtomicBool::new(false);
 pub static CHILD_ENV: RwLock<Environment> = RwLock::new(Environment(Vec::new()));
@@ -63,7 +72,11 @@ pub fn restore_nofile_rlimit() {
 }
 
 /// Spawns the command to run independently of the compositor.
-pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<XdgActivationToken>) {
+pub fn spawn<T: AsRef<OsStr> + Send + 'static>(
+    command: Vec<T>,
+    token: Option<XdgActivationToken>,
+    workspace: Option<LaunchedFromWorkspace>,
+) {
     let _span = tracy_client::span!();
 
     if command.is_empty() {
@@ -75,7 +88,7 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<Xd
         .name("Command Spawner".to_owned())
         .spawn(move || {
             let (command, args) = command.split_first().unwrap();
-            spawn_sync(command, args, token);
+            spawn_sync(command, args, token, workspace);
         });
 
     if let Err(err) = res {
@@ -89,14 +102,23 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(command: Vec<T>, token: Option<Xd
 ///
 /// - https://github.com/swaywm/sway/blob/b3dcde8d69c3f1304b076968a7a64f54d0c958be/sway/commands/exec_always.c#L64
 /// - https://github.com/hyprwm/Hyprland/blob/1ac1ff457ab8ef1ae6a8f2ab17ee7965adfa729f/src/managers/KeybindManager.cpp#L987
-pub fn spawn_sh(command: String, token: Option<XdgActivationToken>) {
-    spawn(vec![String::from("sh"), String::from("-c"), command], token);
+pub fn spawn_sh(
+    command: String,
+    token: Option<XdgActivationToken>,
+    workspace: Option<LaunchedFromWorkspace>,
+) {
+    spawn(
+        vec![String::from("sh"), String::from("-c"), command],
+        token,
+        workspace,
+    );
 }
 
 fn spawn_sync(
     command: impl AsRef<OsStr>,
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     token: Option<XdgActivationToken>,
+    workspace: Option<LaunchedFromWorkspace>,
 ) {
     let _span = tracy_client::span!();
 
@@ -149,6 +171,8 @@ fn spawn_sync(
     }
     drop(env);
 
+    set_launched_from_workspace_env(&mut process, workspace.as_ref());
+
     if let Some(token) = token.as_ref() {
         process.env("XDG_ACTIVATION_TOKEN", token.as_str());
         process.env("DESKTOP_STARTUP_ID", token.as_str());
@@ -169,6 +193,101 @@ fn spawn_sync(
         Err(err) => {
             warn!("error waiting for child: {err:?}");
         }
+    }
+}
+
+fn set_launched_from_workspace_env(
+    process: &mut Command,
+    workspace: Option<&LaunchedFromWorkspace>,
+) {
+    if let Some(workspace) = workspace {
+        process.env(LAUNCHED_FROM_WORKSPACE_ID_ENV, workspace.id.to_string());
+
+        if let Some(workspace_name) = &workspace.name {
+            process.env(LAUNCHED_FROM_WORKSPACE_ENV, workspace_name);
+        } else {
+            process.env_remove(LAUNCHED_FROM_WORKSPACE_ENV);
+        }
+    } else {
+        process.env_remove(LAUNCHED_FROM_WORKSPACE_ID_ENV);
+        process.env_remove(LAUNCHED_FROM_WORKSPACE_ENV);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::ffi::OsStr;
+    use std::process::Command;
+
+    use super::{
+        set_launched_from_workspace_env, LaunchedFromWorkspace, LAUNCHED_FROM_WORKSPACE_ENV,
+        LAUNCHED_FROM_WORKSPACE_ID_ENV,
+    };
+
+    fn env_update<'a>(command: &'a Command, name: &str) -> Option<Option<&'a OsStr>> {
+        command
+            .get_envs()
+            .find_map(|(key, value)| (key == name).then_some(value))
+    }
+
+    fn workspace(id: u64, name: Option<&str>) -> LaunchedFromWorkspace {
+        LaunchedFromWorkspace {
+            id,
+            name: name.map(str::to_owned),
+        }
+    }
+
+    #[test]
+    fn launched_from_workspace_env_is_set_for_named_workspace() {
+        let mut process = Command::new("true");
+        let workspace = workspace(42, Some("dev"));
+
+        set_launched_from_workspace_env(&mut process, Some(&workspace));
+
+        assert_eq!(
+            env_update(&process, LAUNCHED_FROM_WORKSPACE_ENV),
+            Some(Some(OsStr::new("dev")))
+        );
+        assert_eq!(
+            env_update(&process, LAUNCHED_FROM_WORKSPACE_ID_ENV),
+            Some(Some(OsStr::new("42")))
+        );
+    }
+
+    #[test]
+    fn launched_from_workspace_env_keeps_id_for_unnamed_workspace() {
+        let mut process = Command::new("true");
+        process.env(LAUNCHED_FROM_WORKSPACE_ENV, "stale");
+        let workspace = workspace(42, None);
+
+        set_launched_from_workspace_env(&mut process, Some(&workspace));
+
+        assert_eq!(
+            env_update(&process, LAUNCHED_FROM_WORKSPACE_ENV),
+            Some(None)
+        );
+        assert_eq!(
+            env_update(&process, LAUNCHED_FROM_WORKSPACE_ID_ENV),
+            Some(Some(OsStr::new("42")))
+        );
+    }
+
+    #[test]
+    fn launched_from_workspace_env_is_removed_without_workspace() {
+        let mut process = Command::new("true");
+        process.env(LAUNCHED_FROM_WORKSPACE_ENV, "stale");
+        process.env(LAUNCHED_FROM_WORKSPACE_ID_ENV, "42");
+
+        set_launched_from_workspace_env(&mut process, None);
+
+        assert_eq!(
+            env_update(&process, LAUNCHED_FROM_WORKSPACE_ENV),
+            Some(None)
+        );
+        assert_eq!(
+            env_update(&process, LAUNCHED_FROM_WORKSPACE_ID_ENV),
+            Some(None)
+        );
     }
 }
 
