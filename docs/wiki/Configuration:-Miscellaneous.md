@@ -152,6 +152,10 @@ environment {
 Note that these variables do not propagate to the systemd global environment, so tools and applications started by systemd do not see them.
 In particular, if you start a desktop shell like DankMaterialShell through systemd, then use its built-in application launcher, the apps won't see these environment variables.
 
+When niri itself launches a command, it also sets `NIRI_LAUNCHED_FROM_WORKSPACE_ID` to the current workspace ID for that child process.
+If the workspace is named, niri additionally sets `NIRI_LAUNCHED_FROM_WORKSPACE` to the workspace name.
+These values are launch-time snapshots; if niri cannot identify the current workspace, both variables are removed for the launched process, and if the workspace is unnamed, only the name variable is removed.
+
 If you want all processes to see the environment variables, you can set them in your login shell config instead (i.e. `~/.bash_profile`).
 The `niri-session` shell script runs through the login shell and imports all environment variables to systemd before starting niri.
 Keep in mind that all compositors will see variables set in the login shell, not just niri.

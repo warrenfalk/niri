@@ -248,13 +248,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     watcher::setup(&mut state, &config_path, config_includes);
 
     // Spawn commands from cli and auto-start.
-    spawn(cli.command, None);
+    let workspace = state.niri.active_launched_from_workspace();
+    spawn(cli.command, None, workspace.clone());
 
     for elem in spawn_at_startup {
-        spawn(elem.command, None);
+        spawn(elem.command, None, workspace.clone());
     }
     for elem in spawn_sh_at_startup {
-        spawn_sh(elem.command, None);
+        spawn_sh(elem.command, None, workspace.clone());
     }
 
     // Show the config error notification right away if needed.

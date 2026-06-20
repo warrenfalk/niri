@@ -720,12 +720,14 @@ impl State {
                 self.niri.debug_toggle_damage();
             }
             Action::Spawn(command) => {
+                let workspace = self.niri.active_launched_from_workspace();
                 let (token, _) = self.niri.activation_state.create_external_token(None);
-                spawn(command, Some(token.clone()));
+                spawn(command, Some(token.clone()), workspace);
             }
             Action::SpawnSh(command) => {
+                let workspace = self.niri.active_launched_from_workspace();
                 let (token, _) = self.niri.activation_state.create_external_token(None);
-                spawn_sh(command, Some(token.clone()));
+                spawn_sh(command, Some(token.clone()), workspace);
             }
             Action::DoScreenTransition(delay_ms) => {
                 self.backend.with_primary_renderer(|renderer| {

@@ -173,7 +173,7 @@ use crate::ui::mru::{MruCloseRequest, WindowMruUi, WindowMruUiRenderElement};
 use crate::ui::screen_transition::{self, ScreenTransition};
 use crate::ui::screenshot_ui::{OutputScreenshot, ScreenshotUi, ScreenshotUiRenderElement};
 use crate::utils::scale::{closest_representable_scale, guess_monitor_scale};
-use crate::utils::spawning::{CHILD_DISPLAY, CHILD_ENV};
+use crate::utils::spawning::{LaunchedFromWorkspace, CHILD_DISPLAY, CHILD_ENV};
 use crate::utils::vblank_throttle::VBlankThrottle;
 use crate::utils::watcher::Watcher;
 use crate::utils::xwayland::satellite::Satellite;
@@ -2323,6 +2323,15 @@ impl State {
 }
 
 impl Niri {
+    pub fn active_launched_from_workspace(&self) -> Option<LaunchedFromWorkspace> {
+        self.layout
+            .active_workspace()
+            .map(|workspace| LaunchedFromWorkspace {
+                id: workspace.id().get(),
+                name: workspace.name().cloned(),
+            })
+    }
+
     pub fn new(
         config: Rc<RefCell<Config>>,
         event_loop: LoopHandle<'static, State>,
