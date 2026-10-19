@@ -453,6 +453,7 @@ impl SessionLockHandler for State {
     }
 
     fn lock(&mut self, confirmation: SessionLocker) {
+        self.niri.key_release_bindings.cancel_all();
         self.niri.lock(confirmation);
     }
 

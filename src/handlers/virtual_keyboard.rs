@@ -67,6 +67,9 @@ impl VirtualKeyboardHandler for State {
                 // The new keymap will be activated by the next key or modifiers event.
             }
             InputEvent::DeviceRemoved { device } => {
+                self.niri
+                    .key_release_bindings
+                    .cancel_source(device.source());
                 // Restore the original keymap if this device is active. This is
                 // checked based on the device rather than on the keymap, since
                 // the client may have replaced its keymap after we activated it

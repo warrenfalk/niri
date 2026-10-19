@@ -77,6 +77,16 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(
     token: Option<XdgActivationToken>,
     workspace: Option<LaunchedFromWorkspace>,
 ) {
+    spawn_with_stdin(command, token, workspace, Stdio::null());
+}
+
+/// Spawns a command with a caller-owned input stream.
+pub fn spawn_with_stdin<T: AsRef<OsStr> + Send + 'static>(
+    command: Vec<T>,
+    token: Option<XdgActivationToken>,
+    workspace: Option<LaunchedFromWorkspace>,
+    stdin: Stdio,
+) {
     let _span = tracy_client::span!();
 
     if command.is_empty() {
@@ -88,7 +98,7 @@ pub fn spawn<T: AsRef<OsStr> + Send + 'static>(
         .name("Command Spawner".to_owned())
         .spawn(move || {
             let (command, args) = command.split_first().unwrap();
-            spawn_sync(command, args, token, workspace);
+            spawn_sync(command, args, token, workspace, stdin);
         });
 
     if let Err(err) = res {
@@ -119,6 +129,7 @@ fn spawn_sync(
     args: impl IntoIterator<Item = impl AsRef<OsStr>>,
     token: Option<XdgActivationToken>,
     workspace: Option<LaunchedFromWorkspace>,
+    stdin: Stdio,
 ) {
     let _span = tracy_client::span!();
 
@@ -137,7 +148,7 @@ fn spawn_sync(
     let mut process = Command::new(command);
     process
         .args(args)
-        .stdin(Stdio::null())
+        .stdin(stdin)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
 

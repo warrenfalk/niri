@@ -1,5 +1,13 @@
 ### Overview
 
+The local fork provides `spawn-with-key-release "program" "argument"` for
+keyboard bindings. It starts a child on press and sends the hold duration in
+milliseconds followed by a newline to its standard input on trigger-key
+release. EOF without that line means cancellation. This action never repeats
+and cannot run while locked. See
+[`wf_features/key-release-spawn.md`](../../wf_features/key-release-spawn.md)
+for the complete contract.
+
 Key bindings are declared in the `binds {}` section of the config.
 
 > [!NOTE]

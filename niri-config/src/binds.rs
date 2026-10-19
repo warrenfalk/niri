@@ -114,6 +114,7 @@ pub enum Action {
     DebugToggleDamage,
     ToggleTouchpad,
     Spawn(#[knuffel(arguments)] Vec<String>),
+    SpawnWithKeyRelease(#[knuffel(arguments)] Vec<String>),
     SpawnSh(#[knuffel(argument)] String),
     DoScreenTransition(#[knuffel(property(name = "delay-ms"))] Option<u16>),
     #[knuffel(skip)]
@@ -908,6 +909,16 @@ where
             }
             match Action::decode_node(child, ctx) {
                 Ok(action) => {
+                    if matches!(action, Action::SpawnWithKeyRelease(_)) {
+                        if !matches!(key.trigger, Trigger::Keysym(_)) {
+                            ctx.emit_error(DecodeError::unexpected(
+                                child,
+                                "action",
+                                "spawn-with-key-release requires a keyboard binding",
+                            ));
+                        }
+                        repeat = false;
+                    }
                     if !matches!(action, Action::Spawn(_) | Action::SpawnSh(_)) {
                         if let Some(node) = allow_when_locked_node {
                             ctx.emit_error(DecodeError::unexpected(
@@ -1057,6 +1068,28 @@ impl FromStr for Key {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn key_release_spawn_is_keyboard_only_and_never_repeats() {
+        let config = crate::Config::parse_mem(
+            r#"binds { Mod+D repeat=true { spawn-with-key-release "dictation" "hotkey"; }; }"#,
+        )
+        .unwrap();
+        let bind = &config.binds.0[0];
+        assert!(!bind.repeat);
+        assert_eq!(
+            bind.action,
+            Action::SpawnWithKeyRelease(vec!["dictation".into(), "hotkey".into()])
+        );
+        assert!(crate::Config::parse_mem(
+            r#"binds { Mod+WheelScrollDown { spawn-with-key-release "dictation"; }; }"#,
+        )
+        .is_err());
+        assert!(crate::Config::parse_mem(
+            r#"binds { Mod+D allow-when-locked=true { spawn-with-key-release "dictation"; }; }"#,
+        )
+        .is_err());
+    }
 
     #[test]
     fn parse_xf86_screensaver() {

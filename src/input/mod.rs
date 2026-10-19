@@ -55,11 +55,12 @@ use crate::layout::{ActivateWindow, LayoutElement as _};
 use crate::niri::{CastTarget, PointerVisibility, State};
 use crate::ui::mru::{WindowMru, WindowMruUi};
 use crate::ui::screenshot_ui::ScreenshotUi;
-use crate::utils::spawning::{spawn, spawn_sh};
+use crate::utils::spawning::{spawn, spawn_sh, spawn_with_stdin};
 use crate::utils::{center, get_monotonic_time, CastSessionId, ResizeEdge};
 
 pub mod backend_ext;
 pub mod click_grab;
+pub mod key_release;
 pub mod move_grab;
 pub mod pick_color_grab;
 pub mod pick_window_grab;
@@ -280,6 +281,12 @@ impl State {
     }
 
     fn on_device_removed(&mut self, device: impl Device) {
+        if device.has_capability(DeviceCapability::Keyboard) {
+            // Physical keyboards share a source; fail closed on unplug.
+            self.niri
+                .key_release_bindings
+                .cancel_source(KeyboardSource::MAIN);
+        }
         if device.has_capability(DeviceCapability::TabletTool) {
             let tablet_seat = self.niri.seat.tablet_seat();
 
@@ -490,7 +497,7 @@ impl State {
         #[cfg(not(feature = "dbus"))]
         let _ = consumed_by_a11y;
 
-        let Some(Some(bind)) = self.niri.seat.get_keyboard().unwrap().input_from_source(
+        let bind = self.niri.seat.get_keyboard().unwrap().input_from_source(
             source,
             self,
             event.key_code(),
@@ -618,15 +625,19 @@ impl State {
 
                 res
             },
-        ) else {
-            return;
-        };
+        );
 
         if !pressed {
+            // XKB must observe the release before the child can request an
+            // operation which requires no held keys (for example a paste).
+            self.niri
+                .key_release_bindings
+                .release(source, event.key_code());
             return;
         }
 
-        self.handle_bind(bind.clone());
+        let Some(Some(bind)) = bind else { return };
+        self.handle_key_bind(bind.clone(), Some((source, event.key_code())));
 
         self.start_key_repeat(bind);
     }
@@ -688,15 +699,17 @@ impl State {
     }
 
     pub fn handle_bind(&mut self, bind: Bind) {
-        let Some(cooldown) = bind.cooldown else {
-            self.do_action(bind.action, bind.allow_when_locked);
-            return;
-        };
+        self.handle_key_bind(bind, None);
+    }
 
-        // Check this first so that it doesn't trigger the cooldown.
+    fn handle_key_bind(&mut self, bind: Bind, key: Option<(KeyboardSource, Keycode)>) {
         if self.niri.is_locked() && !(bind.allow_when_locked || allowed_when_locked(&bind.action)) {
             return;
         }
+        let Some(cooldown) = bind.cooldown else {
+            self.do_bound_action(bind.action, bind.allow_when_locked, key);
+            return;
+        };
 
         match self.niri.bind_cooldown_timers.entry(bind.key) {
             // The bind is on cooldown.
@@ -715,8 +728,31 @@ impl State {
                     .unwrap();
                 entry.insert(token);
 
-                self.do_action(bind.action, bind.allow_when_locked);
+                self.do_bound_action(bind.action, bind.allow_when_locked, key);
             }
+        }
+    }
+
+    fn do_bound_action(
+        &mut self,
+        action: Action,
+        allow_when_locked: bool,
+        key: Option<(KeyboardSource, Keycode)>,
+    ) {
+        if let Action::SpawnWithKeyRelease(command) = action {
+            let Some((source, key)) = key else { return };
+            match self.niri.key_release_bindings.start(source, key) {
+                Ok(Some(stdin)) => {
+                    let workspace = self.niri.active_launched_from_workspace();
+                    let (token, _) = self.niri.activation_state.create_external_token(None);
+                    let stdin = std::process::Stdio::from(std::os::fd::OwnedFd::from(stdin));
+                    spawn_with_stdin(command, Some(token.clone()), workspace, stdin);
+                }
+                Ok(None) => (),
+                Err(err) => warn!("error creating key release stream: {err:?}"),
+            }
+        } else {
+            self.do_action(action, allow_when_locked);
         }
     }
 
@@ -744,6 +780,7 @@ impl State {
 
                 // Changing VT may not deliver the key releases, so clear the state.
                 self.niri.suppressed_keys.clear();
+                self.niri.key_release_bindings.cancel_all();
 
                 // Stop ongoing key repeat if any.
                 if let Some(token) = self.niri.bind_repeat_timer.take() {
@@ -751,6 +788,7 @@ impl State {
                 }
             }
             Action::Suspend => {
+                self.niri.key_release_bindings.cancel_all();
                 self.backend.suspend();
 
                 // Suspend may not deliver the key releases, so clear the state.
@@ -800,6 +838,9 @@ impl State {
                 let workspace = self.niri.active_launched_from_workspace();
                 let (token, _) = self.niri.activation_state.create_external_token(None);
                 spawn_sh(command, Some(token.clone()), workspace);
+            }
+            Action::SpawnWithKeyRelease(_) => {
+                warn!("spawn-with-key-release requires a keyboard binding");
             }
             Action::DoScreenTransition(delay_ms) => {
                 self.backend.with_primary_renderer(|renderer| {
