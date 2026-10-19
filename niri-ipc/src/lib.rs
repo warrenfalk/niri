@@ -94,6 +94,16 @@ pub enum Request {
         /// Maximum height of the returned thumbnail in physical pixels.
         max_height: u32,
     },
+    /// Mark a window for the lifetime of this IPC connection.
+    ///
+    /// There is one marker per compositor. Only its owning connection can retarget or clear
+    /// it. A null id clears this connection's marker. Closing the window, disconnecting
+    /// (including shutting down the write half), or switching to EventStream clears it.
+    /// Keep the connection open and use a separate connection for the event stream.
+    WindowMarker {
+        /// Window id, or null to clear the marker.
+        id: Option<u64>,
+    },
     /// Perform an action.
     Action(Action),
     /// Change output configuration temporarily.
@@ -2205,6 +2215,16 @@ mod tests {
         );
         assert!("-".parse::<PositionChange>().is_err());
         assert!("10% ".parse::<PositionChange>().is_err());
+    }
+
+    #[test]
+    fn window_marker_json() {
+        for id in [Some(12), None] {
+            let value = serde_json::to_value(Request::WindowMarker { id }).unwrap();
+            assert_eq!(value, serde_json::json!({"WindowMarker": {"id": id}}));
+            let decoded = serde_json::from_value::<Request>(value).unwrap();
+            assert!(matches!(decoded, Request::WindowMarker { id: actual } if actual == id));
+        }
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use std::cell::{Cell, Ref, RefCell};
+use std::rc::Weak;
 use std::time::Duration;
 
 use niri_config::{Color, Config, CornerRadius, GradientInterpolation, WindowRule};
@@ -50,6 +51,9 @@ use crate::utils::{
 #[derive(Debug)]
 pub struct Mapped {
     pub window: Window,
+
+    /// IPC connection leasing the window marker. A closed window drops its lease.
+    pub marker_owner: Weak<Cell<bool>>,
 
     /// Unique ID of this `Mapped`.
     id: MappedId,
@@ -277,6 +281,7 @@ impl Mapped {
         let credentials = get_credentials_for_surface(&surface);
         let mut rv = Self {
             window,
+            marker_owner: Weak::new(),
             id: MappedId::next(),
             credentials,
             pre_commit_hook: hook,
@@ -620,6 +625,10 @@ impl Drop for Mapped {
 }
 
 impl LayoutElement for Mapped {
+    fn is_marked(&self) -> bool {
+        self.marker_owner.upgrade().is_some_and(|owner| owner.get())
+    }
+
     type Id = Window;
 
     fn id(&self) -> &Self::Id {

@@ -5,10 +5,14 @@ use crate::appearance::{
     Border, FocusRing, InsertHint, Shadow, TabIndicator, DEFAULT_BACKGROUND_COLOR,
 };
 use crate::utils::{expect_only_children, Flag, MergeWith};
-use crate::{BorderRule, Color, FloatOrInt, InsertHintPart, ShadowRule, TabIndicatorPart};
+use crate::{
+    BorderRule, Color, FloatOrInt, InsertHintPart, ShadowRule, TabIndicatorPart, WindowMarker,
+    WindowMarkerPart,
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
+    pub window_marker: WindowMarker,
     pub focus_ring: FocusRing,
     pub border: Border,
     pub shadow: Shadow,
@@ -29,6 +33,7 @@ pub struct Layout {
 impl Default for Layout {
     fn default() -> Self {
         Self {
+            window_marker: WindowMarker::default(),
             focus_ring: FocusRing::default(),
             border: Border::default(),
             shadow: Shadow::default(),
@@ -60,6 +65,7 @@ impl MergeWith<LayoutPart> for Layout {
     fn merge_with(&mut self, part: &LayoutPart) {
         merge!(
             (self, part),
+            window_marker,
             focus_ring,
             border,
             shadow,
@@ -96,6 +102,8 @@ impl MergeWith<LayoutPart> for Layout {
 
 #[derive(knuffel::Decode, Debug, Default, Clone, PartialEq)]
 pub struct LayoutPart {
+    #[knuffel(child)]
+    pub window_marker: Option<WindowMarkerPart>,
     #[knuffel(child)]
     pub focus_ring: Option<BorderRule>,
     #[knuffel(child)]

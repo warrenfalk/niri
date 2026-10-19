@@ -13,4 +13,5 @@ mod layer_shell;
 mod remove_output;
 mod transactions;
 mod virtual_pointer;
+mod window_marker;
 mod window_opening;

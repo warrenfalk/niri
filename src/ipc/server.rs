@@ -1,6 +1,7 @@
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::ffi::OsStr;
+use std::os::fd::AsRawFd as _;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -13,6 +14,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use base64::Engine as _;
 use calloop::futures::Scheduler;
 use calloop::io::Async;
+use calloop::RegistrationToken;
 use directories::BaseDirs;
 use futures_util::io::{AsyncReadExt, BufReader};
 use futures_util::{select_biased, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, FutureExt as _};
@@ -54,11 +56,26 @@ pub struct IpcServer {
 }
 
 struct ClientCtx {
+    marker_owner: Rc<Cell<bool>>,
+    disconnect_watch: RegistrationToken,
     event_loop: LoopHandle<'static, State>,
     scheduler: Scheduler<()>,
     ipc_outputs: Arc<Mutex<IpcOutputMap>>,
     event_streams: Rc<RefCell<Vec<EventStreamSender>>>,
     event_stream_state: Rc<RefCell<EventStreamState>>,
+}
+
+impl Drop for ClientCtx {
+    fn drop(&mut self) {
+        // Mapped windows only hold Weak references. Dropping the connection invalidates its
+        // marker immediately, including on read/write failure and the EventStream transition.
+        self.marker_owner.set(false);
+        self.event_loop.remove(self.disconnect_watch);
+        if Rc::weak_count(&self.marker_owner) != 0 {
+            self.event_loop
+                .insert_idle(|state| state.niri.queue_redraw_all());
+        }
+    }
 }
 
 struct EventStreamClient {
@@ -155,10 +172,17 @@ fn socket_dir() -> PathBuf {
         .unwrap_or_else(env::temp_dir)
 }
 
-fn on_new_ipc_client(state: &mut State, stream: UnixStream) {
+pub(crate) fn on_new_ipc_client(state: &mut State, stream: UnixStream) {
     let _span = tracy_client::span!("on_new_ipc_client");
     trace!("new IPC client connected");
 
+    let watch_stream = match stream.try_clone() {
+        Ok(stream) => stream,
+        Err(err) => {
+            warn!("error cloning IPC stream: {err:?}");
+            return;
+        }
+    };
     let stream = match state.niri.event_loop.adapt_io(stream) {
         Ok(stream) => stream,
         Err(err) => {
@@ -169,7 +193,35 @@ fn on_new_ipc_client(state: &mut State, stream: UnixStream) {
 
     let ipc_server = state.niri.ipc_server.as_ref().unwrap();
 
+    let marker_owner = Rc::new(Cell::new(true));
+    let owner = marker_owner.clone();
+    // Watch hangup independently of request processing, which may be waiting for a window
+    // pick. Edge triggering avoids spinning when there is unread pipelined request data.
+    let disconnect_watch = state
+        .niri
+        .event_loop
+        .insert_source(
+            Generic::new(watch_stream, Interest::READ, Mode::Edge),
+            move |_, stream, state| {
+                let mut fd = libc::pollfd {
+                    fd: stream.as_raw_fd(),
+                    events: libc::POLLRDHUP,
+                    revents: 0,
+                };
+                // SAFETY: fd points to one initialized pollfd; a zero timeout cannot block.
+                let disconnected = unsafe { libc::poll(&mut fd, 1, 0) } > 0
+                    && fd.revents & (libc::POLLHUP | libc::POLLRDHUP | libc::POLLERR) != 0;
+                if disconnected && owner.replace(false) && Rc::weak_count(&owner) != 0 {
+                    state.niri.queue_redraw_all();
+                }
+                Ok(PostAction::Continue)
+            },
+        )
+        .unwrap();
+
     let ctx = ClientCtx {
+        marker_owner,
+        disconnect_watch,
         event_loop: state.niri.event_loop.clone(),
         scheduler: state.niri.scheduler.clone(),
         ipc_outputs: state.backend.ipc_outputs(),
@@ -269,6 +321,36 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             return Ok(());
         }
     }
+}
+
+fn set_window_marker(
+    state: &mut State,
+    owner: &Rc<Cell<bool>>,
+    id: Option<u64>,
+) -> Result<(), String> {
+    let layout = &mut state.niri.layout;
+    if id.is_some_and(|id| !layout.windows().any(|(_, win)| win.id().get() == id)) {
+        return Err(String::from("window not found"));
+    }
+    if layout.windows().any(|(_, win)| {
+        win.marker_owner
+            .upgrade()
+            .is_some_and(|current| current.get() && !Rc::ptr_eq(&current, owner))
+    }) {
+        return Err(String::from(
+            "window marker is owned by another IPC connection",
+        ));
+    }
+
+    layout.with_windows_mut(|win, _| {
+        win.marker_owner = if Some(win.id().get()) == id {
+            Rc::downgrade(owner)
+        } else {
+            Default::default()
+        };
+    });
+    state.niri.queue_redraw_all();
+    Ok(())
 }
 
 async fn process(ctx: &ClientCtx, request: Request) -> Reply {
@@ -400,6 +482,18 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 .await
                 .map_err(|_| String::from("error getting window thumbnail"))?;
             Response::WindowThumbnail(result?)
+        }
+        Request::WindowMarker { id } => {
+            let owner = ctx.marker_owner.clone();
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let result = set_window_marker(state, &owner, id);
+                let _ = tx.send_blocking(result);
+            });
+            rx.recv()
+                .await
+                .map_err(|_| String::from("error setting window marker"))??;
+            Response::Handled
         }
         Request::Action(action) => {
             validate_action(&action)?;

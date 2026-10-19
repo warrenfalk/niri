@@ -255,6 +255,51 @@ impl Default for FocusRing {
     }
 }
 
+/// An inset outline independent of keyboard focus and layout geometry.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct WindowMarker {
+    pub off: bool,
+    pub width: f64,
+    pub color: Color,
+}
+
+impl Default for WindowMarker {
+    fn default() -> Self {
+        Self {
+            off: false,
+            width: 3.,
+            color: Color::from_rgba8_unpremul(255, 180, 60, 255),
+        }
+    }
+}
+
+impl MergeWith<WindowMarkerPart> for WindowMarker {
+    fn merge_with(&mut self, part: &WindowMarkerPart) {
+        self.off |= part.off;
+        if part.on {
+            self.off = false;
+        }
+        if let Some(width) = part.width {
+            self.width = width.0;
+        }
+        if let Some(color) = part.color {
+            self.color = color;
+        }
+    }
+}
+
+#[derive(knuffel::Decode, Debug, Default, Clone, Copy, PartialEq)]
+pub struct WindowMarkerPart {
+    #[knuffel(child)]
+    pub off: bool,
+    #[knuffel(child)]
+    pub on: bool,
+    #[knuffel(child, unwrap(argument))]
+    pub width: Option<FloatOrInt<0, 65535>>,
+    #[knuffel(child)]
+    pub color: Option<Color>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Border {
     pub off: bool,

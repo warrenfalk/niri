@@ -634,6 +634,23 @@ mod tests {
     }
 
     #[test]
+    fn window_marker_config() {
+        let parsed = do_parse(
+            r##"
+            layout { window-marker { width 5.5; color "#ff44aa"; off; }; }
+        "##,
+        );
+        assert_eq!(parsed.layout.window_marker.width, 5.5);
+        assert_eq!(
+            parsed.layout.window_marker.color,
+            Color::from_rgba8_unpremul(255, 68, 170, 255)
+        );
+        assert!(parsed.layout.window_marker.off);
+        assert_eq!(do_parse("").layout.window_marker, WindowMarker::default());
+        assert!(Config::parse_mem("layout { window-marker { width -1; }; }").is_err());
+    }
+
+    #[test]
     fn default_repeat_params() {
         let config = Config::parse_mem("").unwrap();
         assert_eq!(config.input.keyboard.repeat_delay, 600);
@@ -1305,6 +1322,16 @@ mod tests {
                 },
             ],
             layout: Layout {
+                window_marker: WindowMarker {
+                    off: false,
+                    width: 3.0,
+                    color: Color {
+                        r: 1.0,
+                        g: 0.7058824,
+                        b: 0.23529412,
+                        a: 1.0,
+                    },
+                },
                 focus_ring: FocusRing {
                     off: false,
                     width: 5.0,

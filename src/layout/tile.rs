@@ -47,6 +47,9 @@ pub struct Tile<W: LayoutElement> {
     /// The focus ring around the window.
     focus_ring: FocusRing,
 
+    /// An inset integration marker; never participates in sizing or input regions.
+    marker: FocusRing,
+
     /// The shadow around the window.
     shadow: Shadow,
 
@@ -196,6 +199,7 @@ impl<W: LayoutElement> Tile<W> {
             window,
             border: FocusRing::new(border_config.into()),
             focus_ring: FocusRing::new(focus_ring_config),
+            marker: FocusRing::new(Default::default()),
             shadow: Shadow::new(shadow_config),
             sizing_mode,
             fullscreen_backdrop: SolidColorBuffer::new((0., 0.), [0., 0., 0., 1.]),
@@ -262,6 +266,7 @@ impl<W: LayoutElement> Tile<W> {
     pub fn update_shaders(&mut self) {
         self.border.update_shaders();
         self.focus_ring.update_shaders();
+        self.marker.update_shaders();
         self.shadow.update_shaders();
     }
 
@@ -538,6 +543,31 @@ impl<W: LayoutElement> Tile<W> {
         } else {
             false
         };
+        // Reuse the border renderer, placing the entire marker inside the tile. This keeps
+        // it visible at output edges and in fullscreen without changing any layout metrics.
+        if self.window.is_marked() {
+            let config = self.options.layout.window_marker;
+            let width = round_logical_in_physical(self.scale, config.width)
+                .min(animated_tile_size.w / 2.)
+                .min(animated_tile_size.h / 2.);
+            self.marker.update_config(niri_config::FocusRing {
+                off: config.off || width <= 0.,
+                width,
+                active_color: config.color,
+                ..Default::default()
+            });
+            self.marker.update_render_elements(
+                animated_tile_size - Size::from((width * 2., width * 2.)),
+                true,
+                true,
+                false,
+                view_rect,
+                radius,
+                self.scale,
+                1.,
+            );
+        }
+
         let radius = radius.expanded_by(self.focus_ring.width() as f32);
         self.focus_ring.update_render_elements(
             animated_tile_size,
@@ -1101,6 +1131,17 @@ impl<W: LayoutElement> Tile<W> {
         let window_render_loc = location + window_loc;
         let area = Rectangle::new(window_render_loc, animated_window_size);
         xray_pos = xray_pos.offset(window_loc);
+
+        // Elements are front-to-back. Keep the marker above opaque window contents even when
+        // the window is unfocused or fullscreen. The ordinary focus ring remains outside it.
+        if self.window.is_marked() {
+            let width = self.marker.width();
+            self.marker.render(
+                ctx.renderer,
+                location + Point::from((width, width)),
+                &mut |elem| push(elem.into()),
+            );
+        }
 
         let rules = self.window.rules();
 
