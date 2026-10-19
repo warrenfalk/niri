@@ -257,9 +257,7 @@ async fn handle_client(ctx: ClientCtx, stream: Async<'static, UnixStream>) -> an
             }
         }
 
-        let request = serde_json::from_slice(&buf)
-            .context("error parsing request")
-            .map_err(|err| err.to_string());
+        let request = super::decode_request(&buf);
         let requested_error = matches!(request, Ok(Request::ReturnError));
         let requested_event_stream = matches!(request, Ok(Request::EventStream));
 
@@ -494,6 +492,20 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 .await
                 .map_err(|_| String::from("error setting window marker"))??;
             Response::Handled
+        }
+        Request::PasteText(request) => {
+            let owner = Rc::downgrade(&ctx.marker_owner);
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                if let Err(err) = state.start_temporary_paste(request, owner, tx.clone()) {
+                    let _ = tx.try_send(Err(err));
+                }
+            });
+            let result = rx
+                .recv()
+                .await
+                .map_err(|_| String::from("paste operation unavailable"))??;
+            Response::PasteText(result)
         }
         Request::Action(action) => {
             validate_action(&action)?;

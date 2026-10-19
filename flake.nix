@@ -18,6 +18,8 @@
           dbus,
           libGL,
           libdisplay-info_0_3,
+          # Compatibility with workstation callers of the older package interface.
+          libdisplay-info ? null,
           libinput,
           seatd,
           libxkbcommon,
@@ -73,23 +75,22 @@
             installShellFiles
           ];
 
-          buildInputs =
-            [
-              cairo
-              dbus
-              libGL
-              libdisplay-info_0_3
-              libinput
-              seatd
-              libxkbcommon
-              libgbm
-              pango
-              wayland
-            ]
-            ++ lib.optional (withDbus || withScreencastSupport || withSystemd) dbus
-            ++ lib.optional withScreencastSupport pipewire
-            # Also includes libudev
-            ++ lib.optional withSystemd systemd;
+          buildInputs = [
+            cairo
+            dbus
+            libGL
+            (if libdisplay-info == null then libdisplay-info_0_3 else libdisplay-info)
+            libinput
+            seatd
+            libxkbcommon
+            libgbm
+            pango
+            wayland
+          ]
+          ++ lib.optional (withDbus || withScreencastSupport || withSystemd) dbus
+          ++ lib.optional withScreencastSupport pipewire
+          # Also includes libudev
+          ++ lib.optional withSystemd systemd;
 
           buildFeatures =
             lib.optional withDbus "dbus"
@@ -113,21 +114,20 @@
             "--skip=::egl"
           ];
 
-          postInstall =
-            ''
-              installShellCompletion --cmd niri \
-                --bash <($out/bin/niri completions bash) \
-                --fish <($out/bin/niri completions fish) \
-                --nushell <($out/bin/niri completions nushell) \
-                --zsh <($out/bin/niri completions zsh)
+          postInstall = ''
+            installShellCompletion --cmd niri \
+              --bash <($out/bin/niri completions bash) \
+              --fish <($out/bin/niri completions fish) \
+              --nushell <($out/bin/niri completions nushell) \
+              --zsh <($out/bin/niri completions zsh)
 
-              install -Dm644 resources/niri.desktop -t $out/share/wayland-sessions
-              install -Dm644 resources/niri-portals.conf -t $out/share/xdg-desktop-portal
-            ''
-            + lib.optionalString withSystemd ''
-              install -Dm755 resources/niri-session $out/bin/niri-session
-              install -Dm644 resources/niri{.service,-shutdown.target} -t $out/lib/systemd/user
-            '';
+            install -Dm644 resources/niri.desktop -t $out/share/wayland-sessions
+            install -Dm644 resources/niri-portals.conf -t $out/share/xdg-desktop-portal
+          ''
+          + lib.optionalString withSystemd ''
+            install -Dm755 resources/niri-session $out/bin/niri-session
+            install -Dm644 resources/niri{.service,-shutdown.target} -t $out/lib/systemd/user
+          '';
 
           env = {
             # Force linking with libEGL and libwayland-client so they end up in RPATH and
@@ -215,7 +215,10 @@
       packages = forAllSystems (
         system:
         let
-          niri = nixpkgsFor.${system}.callPackage niri-package { };
+          niri = nixpkgsFor.${system}.callPackage niri-package {
+            # Avoid callPackage filling the compatibility alias with the newer system ABI.
+            libdisplay-info = null;
+          };
         in
         {
           inherit niri;
@@ -241,7 +244,7 @@
       );
 
       overlays.default = final: _: {
-        niri = final.callPackage niri-package { };
+        niri = final.callPackage niri-package { libdisplay-info = null; };
       };
     };
 }

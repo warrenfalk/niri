@@ -47,11 +47,13 @@ pub struct Client {
     pub connection: Connection,
     pub qh: QueueHandle<State>,
     pub display: WlDisplay,
+    pub registry: WlRegistry,
     pub state: State,
 }
 
 pub struct State {
     pub qh: QueueHandle<State>,
+    pub clipboard: super::clipboard_paste::TestClipboard,
 
     pub globals: Vec<Global>,
     pub outputs: HashMap<WlOutput, String>,
@@ -249,11 +251,12 @@ impl Client {
             .unwrap();
 
         let display = connection.display();
-        let _registry = display.get_registry(&qh, ());
+        let registry = display.get_registry(&qh, ());
         connection.flush().unwrap();
 
         let state = State {
             qh: qh.clone(),
+            clipboard: Default::default(),
             globals: Vec::new(),
             outputs: HashMap::new(),
             surfaces: HashMap::new(),
@@ -275,6 +278,7 @@ impl Client {
             connection,
             qh,
             display,
+            registry,
             state,
         }
     }

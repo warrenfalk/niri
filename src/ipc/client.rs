@@ -55,11 +55,14 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
             stdin
                 .read_until(b'\n', &mut buf)
                 .context("error reading from stdin")?;
-            serde_json::from_slice(&buf).context("error parsing request JSON from stdin")?
+            super::decode_request(&buf).map_err(|error| anyhow!(error))?
         }
     };
 
     if print_request {
+        if matches!(request, Request::PasteText(_)) {
+            bail!("paste requests contain private text and cannot be printed");
+        }
         let json_str =
             serde_json::to_string(&request).context("error formatting request as JSON")?;
         println!("{json_str}");

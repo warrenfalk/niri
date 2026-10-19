@@ -104,6 +104,11 @@ pub enum Request {
         /// Window id, or null to clear the marker.
         id: Option<u64>,
     },
+    /// Offer text privately to a native Wayland destination and trigger its paste shortcut.
+    ///
+    /// The reply reports data transfer, never application insertion. Disconnecting cancels
+    /// the operation. Supply text through this structured request, not process arguments.
+    PasteText(PasteTextRequest),
     /// Perform an action.
     Action(Action),
     /// Change output configuration temporarily.
@@ -156,6 +161,8 @@ pub type Reply = Result<Response, String>;
 pub enum Response {
     /// A request that does not need a response was handled successfully.
     Handled,
+    /// Outcome of a private temporary paste offer.
+    PasteText(PasteTextResult),
     /// The version string for the running niri instance.
     Version(String),
     /// Information about connected outputs.
@@ -186,6 +193,86 @@ pub enum Response {
     OverviewState(Overview),
     /// Information about screencasts.
     Casts(Vec<Cast>),
+}
+
+/// Parameters for a destination-specific temporary paste offer.
+#[derive(Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct PasteTextRequest {
+    /// Destination Niri window id.
+    pub id: u64,
+    /// UTF-8 text (1 to 1,048,576 bytes). Kept out of Debug output.
+    pub text: String,
+    /// Shortcut chosen by the integration, without application-name detection in Niri.
+    #[serde(default)]
+    pub shortcut: PasteShortcut,
+    /// Cleanup deadline in milliseconds (100 to 30,000, default 5,000).
+    #[serde(default = "default_paste_timeout")]
+    pub timeout_ms: u32,
+}
+
+fn default_paste_timeout() -> u32 {
+    5_000
+}
+
+impl std::fmt::Debug for PasteTextRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("PasteTextRequest")
+            .field("id", &self.id)
+            .field("text", &"<redacted>")
+            .field("shortcut", &self.shortcut)
+            .field("timeout_ms", &self.timeout_ms)
+            .finish()
+    }
+}
+
+/// The application's ordinary clipboard paste shortcut.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum PasteShortcut {
+    /// Control+V, the default.
+    #[default]
+    CtrlV,
+    /// Control+Shift+V, commonly used by terminals.
+    CtrlShiftV,
+}
+
+/// Completion reason for a temporary offer; no reason asserts text insertion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub enum PasteTextOutcome {
+    /// At least one complete write, all request pipes closed, and all private offers destroyed.
+    DataServed,
+    /// The owning IPC connection closed.
+    Cancelled,
+    /// Keyboard focus left the exact destination surface, or the seat became unavailable.
+    FocusChanged,
+    /// The destination was unmapped or closed.
+    DestinationClosed,
+    /// Another source changed the ordinary clipboard.
+    ClipboardChanged,
+    /// The cleanup deadline expired; data may already have been served.
+    TimedOut,
+    /// A pipe failed, an invalid MIME was requested, or the request limit was exceeded.
+    TransferFailed,
+    /// The application destroyed its offers without requesting data.
+    OfferDismissed,
+}
+
+/// Transfer accounting, including on cancellation; never a widget insertion acknowledgment.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct PasteTextResult {
+    /// Destination window id.
+    pub id: u64,
+    /// Why the operation ended.
+    pub outcome: PasteTextOutcome,
+    /// Number of accepted MIME receive requests.
+    pub requests: u32,
+    /// Number of request pipes completely written.
+    pub transfers_completed: u32,
+    /// Total bytes written to request pipes; multiple MIME requests count separately.
+    pub bytes_written: u64,
 }
 
 /// Overview information.
@@ -2215,6 +2302,25 @@ mod tests {
         );
         assert!("-".parse::<PositionChange>().is_err());
         assert!("10% ".parse::<PositionChange>().is_err());
+    }
+
+    #[test]
+    fn private_paste_json_and_redaction() {
+        let decoded: Request = serde_json::from_value(serde_json::json!({
+            "PasteText": {"id": 12, "text": "private 🌍\nsecond line"}
+        }))
+        .unwrap();
+        assert!(!format!("{decoded:?}").contains("private 🌍"));
+        let Request::PasteText(request) = decoded else {
+            panic!("wrong variant");
+        };
+        assert_eq!(request.shortcut, PasteShortcut::CtrlV);
+        assert_eq!(request.timeout_ms, 5000);
+        assert_eq!(request.text, "private 🌍\nsecond line");
+        let value = serde_json::to_value(Request::PasteText(request)).unwrap();
+        assert_eq!(value["PasteText"]["text"], "private 🌍\nsecond line");
+        assert_eq!(value["PasteText"]["shortcut"], "CtrlV");
+        assert_eq!(value["PasteText"]["timeout_ms"], 5000);
     }
 
     #[test]

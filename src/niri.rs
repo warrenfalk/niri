@@ -354,6 +354,7 @@ pub struct Niri {
     pub single_pixel_buffer_state: SinglePixelBufferState,
 
     pub seat: Seat<State>,
+    pub temporary_paste: Option<crate::clipboard_paste::TemporaryPaste>,
     /// Scancodes of the keys to suppress.
     pub suppressed_keys: HashSet<Keycode>,
     /// Button codes of the mouse buttons to suppress.
@@ -858,6 +859,8 @@ impl State {
         self.niri.popups.cleanup();
         self.refresh_popup_grab();
         self.update_keyboard_focus();
+
+        self.refresh_temporary_paste();
 
         // Should be called before refresh_layout() because that one will refresh other window
         // states and then send a pending configure.
@@ -2851,6 +2854,7 @@ impl Niri {
             single_pixel_buffer_state,
 
             seat,
+            temporary_paste: None,
             keyboard_focus: KeyboardFocus::Layout { surface: None },
             layer_shell_on_demand_focus: None,
             idle_inhibiting_surfaces: HashSet::new(),
