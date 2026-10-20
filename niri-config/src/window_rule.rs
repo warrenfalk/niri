@@ -39,6 +39,8 @@ pub struct WindowRule {
 
     // Rules applied dynamically.
     #[knuffel(child, unwrap(argument))]
+    pub disable_modified_mouse_gestures: Option<bool>,
+    #[knuffel(child, unwrap(argument))]
     pub min_width: Option<u16>,
     #[knuffel(child, unwrap(argument))]
     pub min_height: Option<u16>,

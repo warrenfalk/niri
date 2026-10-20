@@ -1856,6 +1856,7 @@ mod tests {
                     on_xdg_activate: Some(
                         Ignore,
                     ),
+                    disable_modified_mouse_gestures: None,
                     min_width: None,
                     min_height: None,
                     max_width: None,

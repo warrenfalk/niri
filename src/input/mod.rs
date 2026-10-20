@@ -2950,6 +2950,18 @@ impl State {
             self.niri.tablet_cursor_location = None;
 
             let is_overview_open = self.niri.layout.is_overview_open();
+            // A window may reserve modifier+button clicks for its own UI.
+            // Explicit user bindings and compositor overlays keep priority.
+            let window_reserves_clicks = !is_overview_open
+                && !self.niri.is_locked()
+                && !self.niri.screenshot_ui.is_open()
+                && self.niri.window_under_cursor().is_some_and(|window| {
+                    window
+                        .rules()
+                        .disable_modified_mouse_gestures
+                        .unwrap_or(false)
+                });
+            let gesture_mod_down = mod_down && !window_reserves_clicks;
 
             if is_overview_open && !pointer.is_grabbed() && button == Some(MouseButton::Right) {
                 if let Some((output, ws)) = self.niri.workspace_under_cursor(true) {
@@ -2981,7 +2993,7 @@ impl State {
 
             if button == Some(MouseButton::Middle)
                 && !pointer.is_grabbed()
-                && mod_down
+                && gesture_mod_down
                 && !self.niri.is_locked()
                 && !self.niri.screenshot_ui.is_open()
             {
@@ -3027,7 +3039,7 @@ impl State {
 
                 // Check if we need to start an interactive move.
                 if button == Some(MouseButton::Left) && !pointer.is_grabbed() {
-                    if is_overview_open || mod_down {
+                    if is_overview_open || gesture_mod_down {
                         let location = pointer.current_location();
 
                         if !is_overview_open {
@@ -3060,7 +3072,10 @@ impl State {
                     }
                 }
                 // Check if we need to start an interactive resize.
-                else if button == Some(MouseButton::Right) && !pointer.is_grabbed() && mod_down {
+                else if button == Some(MouseButton::Right)
+                    && !pointer.is_grabbed()
+                    && gesture_mod_down
+                {
                     let location = pointer.current_location();
                     let (output, pos_within_output) = self.niri.output_under(location).unwrap();
                     let edges = self

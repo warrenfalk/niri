@@ -1,5 +1,13 @@
 ### Overview
 
+The local fork provides `disable-modified-mouse-gestures true` as a dynamic
+window rule. Over a matching window, modifier+left/right/middle button clicks
+reach the client instead of starting Niri's built-in move, resize or workspace
+drag gestures. Modifiers remain visible to the application. Explicit mouse
+bindings and compositor overlays retain priority. The default is false;
+later matching rules may override it with false. See
+[`wf_features/modified-mouse-gestures.md`](../../wf_features/modified-mouse-gestures.md).
+
 Window rules let you adjust behavior for individual windows.
 They have `match` and `exclude` directives that control which windows the rule should apply to, and a number of properties that you can set.
 
