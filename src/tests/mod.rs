@@ -13,6 +13,7 @@ mod fullscreen;
 mod key_release;
 mod layer_shell;
 mod remove_output;
+mod text_context;
 mod transactions;
 mod virtual_pointer;
 mod window_marker;

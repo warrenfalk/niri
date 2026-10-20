@@ -507,6 +507,31 @@ async fn process(ctx: &ClientCtx, request: Request) -> Reply {
                 .map_err(|_| String::from("paste operation unavailable"))??;
             Response::PasteText(result)
         }
+        Request::CommitText(request) => {
+            let id = request.id;
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                let _ = tx.try_send(state.commit_text_context(request));
+            });
+            rx.recv()
+                .await
+                .map_err(|_| String::from("text input commit unavailable"))??;
+            Response::TextInputCommitted { id }
+        }
+        Request::TextInputContext { id, focus } => {
+            let owner = ctx.marker_owner.clone();
+            let (tx, rx) = async_channel::bounded(1);
+            ctx.event_loop.insert_idle(move |state| {
+                if let Err(error) = state.read_text_context(id, focus, &owner, tx.clone()) {
+                    let _ = tx.try_send(Err(error));
+                }
+            });
+            let context = rx
+                .recv()
+                .await
+                .map_err(|_| String::from("text context operation unavailable"))??;
+            Response::TextInputContext(context)
+        }
         Request::Action(action) => {
             validate_action(&action)?;
 

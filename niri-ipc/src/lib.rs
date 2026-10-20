@@ -109,6 +109,21 @@ pub enum Request {
     /// The reply reports data transfer, never application insertion. Disconnecting cancels
     /// the operation. Supply text through this structured request, not process arguments.
     PasteText(PasteTextRequest),
+    /// Submit new text through a live, revision-guarded text-input field.
+    /// No clipboard offer or keyboard shortcut is used. The reply acknowledges
+    /// protocol submission, not application insertion.
+    CommitText(CommitTextRequest),
+    /// Read the focused field's surrounding text for a connection-owned window lease.
+    ///
+    /// A null id releases the lease. Set focus to activate the original window and
+    /// wait for fresh context. Keep this connection open while using its revisions.
+    TextInputContext {
+        /// Destination window, or null to release this connection's lease.
+        id: Option<u64>,
+        /// Focus the destination before reading. Held keys/grabs refuse this operation.
+        #[serde(default)]
+        focus: bool,
+    },
     /// Perform an action.
     Action(Action),
     /// Change output configuration temporarily.
@@ -163,6 +178,13 @@ pub enum Response {
     Handled,
     /// Outcome of a private temporary paste offer.
     PasteText(PasteTextResult),
+    /// Surrounding text of the active field, or null when unavailable or sensitive.
+    TextInputContext(Option<TextInputContext>),
+    /// A text-input commit was submitted to this window, without insertion acknowledgement.
+    TextInputCommitted {
+        /// Destination window id.
+        id: u64,
+    },
     /// The version string for the running niri instance.
     Version(String),
     /// Information about connected outputs.
@@ -209,10 +231,36 @@ pub struct PasteTextRequest {
     /// Cleanup deadline in milliseconds (100 to 30,000, default 5,000).
     #[serde(default = "default_paste_timeout")]
     pub timeout_ms: u32,
+    /// Optional revision from a live TextInputContext lease. A stale revision
+    /// refuses the operation before focusing or creating any clipboard offer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_revision: Option<u64>,
 }
 
 fn default_paste_timeout() -> u32 {
     5_000
+}
+
+/// New text for the exact field described by a live context revision.
+#[derive(Serialize, Deserialize, Clone)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct CommitTextRequest {
+    /// Destination window id.
+    pub id: u64,
+    /// UTF-8 new text (1 to 4000 bytes), absent from Debug output.
+    pub text: String,
+    /// Required revision from the connection-owned context snapshot.
+    pub context_revision: u64,
+}
+
+impl std::fmt::Debug for CommitTextRequest {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CommitTextRequest")
+            .field("id", &self.id)
+            .field("text", &"<redacted>")
+            .field("context_revision", &self.context_revision)
+            .finish()
+    }
 }
 
 impl std::fmt::Debug for PasteTextRequest {
@@ -222,7 +270,38 @@ impl std::fmt::Debug for PasteTextRequest {
             .field("text", &"<redacted>")
             .field("shortcut", &self.shortcut)
             .field("timeout_ms", &self.timeout_ms)
+            .field("context_revision", &self.context_revision)
             .finish()
+    }
+}
+
+/// A bounded context snapshot. Surrounding text is deliberately absent from Debug.
+#[derive(Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "json-schema", derive(schemars::JsonSchema))]
+pub struct TextInputContext {
+    /// Destination window id.
+    pub id: u64,
+    /// Opaque revision, valid only while its owning IPC connection remains open.
+    pub revision: u64,
+    /// UTF-8 plain text, at most 4000 bytes.
+    pub text: String,
+    /// Caret byte offset.
+    pub cursor: u32,
+    /// Selection anchor byte offset; some clients collapse this to the caret.
+    pub anchor: u32,
+    /// Wayland text-input content hint bitmask.
+    pub content_hint: u32,
+    /// Wayland text-input content purpose.
+    pub content_purpose: u32,
+}
+
+impl std::fmt::Debug for TextInputContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TextInputContext")
+            .field("id", &self.id)
+            .field("revision", &self.revision)
+            .field("text", &"<redacted>")
+            .finish_non_exhaustive()
     }
 }
 
@@ -2321,6 +2400,63 @@ mod tests {
         assert_eq!(value["PasteText"]["text"], "private 🌍\nsecond line");
         assert_eq!(value["PasteText"]["shortcut"], "CtrlV");
         assert_eq!(value["PasteText"]["timeout_ms"], 5000);
+    }
+
+    #[test]
+    fn text_context_json_and_redaction() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "TextInputContext": {"id": 42}
+        }))
+        .unwrap();
+        assert!(matches!(
+            request,
+            Request::TextInputContext {
+                id: Some(42),
+                focus: false
+            }
+        ));
+        let context = TextInputContext {
+            id: 42,
+            revision: 3,
+            text: "private surrounding text".into(),
+            cursor: 7,
+            anchor: 7,
+            content_hint: 0,
+            content_purpose: 0,
+        };
+        let response = Response::TextInputContext(Some(context));
+        assert!(!format!("{response:?}").contains("private surrounding text"));
+        let json = serde_json::to_value(&response).unwrap();
+        assert_eq!(json["TextInputContext"]["text"], "private surrounding text");
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "PasteText": {"id":42, "text":"new text", "context_revision":3}
+        }))
+        .unwrap();
+        let Request::PasteText(request) = request else {
+            panic!("wrong request")
+        };
+        assert_eq!(request.context_revision, Some(3));
+    }
+
+    #[test]
+    fn text_input_commit_json_and_redaction() {
+        let request: Request = serde_json::from_value(serde_json::json!({
+            "CommitText": {"id":42, "text":"private new words", "context_revision":3}
+        }))
+        .unwrap();
+        assert!(!format!("{request:?}").contains("private new words"));
+        assert_eq!(
+            serde_json::to_value(&request).unwrap()["CommitText"]["text"],
+            "private new words"
+        );
+        assert!(serde_json::from_value::<Request>(serde_json::json!({
+            "CommitText": {"id":42, "text":"missing revision"}
+        }))
+        .is_err());
+        assert_eq!(
+            serde_json::to_value(Response::TextInputCommitted { id: 42 }).unwrap(),
+            serde_json::json!({"TextInputCommitted":{"id":42}})
+        );
     }
 
     #[test]

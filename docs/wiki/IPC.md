@@ -67,6 +67,12 @@ You can find all available requests and response types in the [niri-ipc sub-crat
 
 ### Backwards Compatibility
 
+This fork also provides connection-owned surrounding-text snapshots for native
+Wayland text fields, direct text-input commits and an optional revision guard on private paste. See the
+[text context contract](../../wf_features/text-input-context.md) for the JSON
+API, capability limits and privacy behavior. Unsupported applications return no
+context; the API never rewrites existing field text.
+
 The JSON output *should* remain stable, as in:
 
 - existing fields and enum variants should not be renamed

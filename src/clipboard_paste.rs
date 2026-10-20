@@ -110,6 +110,9 @@ impl State {
                 "paste requires an unlocked layout with no held keys or keyboard grab",
             ));
         }
+        if let Some(revision) = request.context_revision {
+            self.validate_text_context(request.id, revision)?;
+        }
         let (window, surface, credentials) = self
             .niri
             .layout

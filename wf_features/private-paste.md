@@ -19,6 +19,11 @@ no terminal/application-name shortcut table. `timeout_ms` defaults to 5000 and
 must be 100–30000. It is a cleanup deadline, not a paste delay. There is no new
 configuration setting for this operation.
 
+An optional `context_revision` conditions preflight on a live surrounding-text
+snapshot. Omission preserves this contract's original behavior. See
+[destination text context](text-input-context.md) for lease lifetime and stale
+state refusal before any offer or input is sent.
+
 Use a dedicated connection for each paste and keep its write half open until the
 reply. Closing it, including shutting down just the write half, cancels the
 operation. A separate persistent connection can retain a window marker. A client
@@ -133,9 +138,10 @@ enumeration, a real-selection change counter and re-offering of that selection.
 The normal selection setter still cancels previous client sources; it must not
 be used to implement a save/replace/restore scheme.
 
-Both Smithay workspace dependencies pin that exact commit from
-`https://github.com/warrenfalk/smithay.git`. Cargo and Nix builds use the hosted
-revision without requiring a separate local Smithay checkout.
+Both Smithay workspace dependencies pin a hosted revision from
+`https://github.com/warrenfalk/smithay.git` containing that commit. The later
+[text context feature](text-input-context.md) extends the pin without changing
+this clipboard behavior. Cargo and Nix builds require no local Smithay checkout.
 
 The Nix package also accepts the older `libdisplay-info` override as an alias
 for the explicit `libdisplay-info_0_3` dependency, so the existing workstation

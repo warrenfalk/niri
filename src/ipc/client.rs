@@ -60,7 +60,7 @@ pub fn handle_msg(mut msg: Msg, json: bool, print_request: bool) -> anyhow::Resu
     };
 
     if print_request {
-        if matches!(request, Request::PasteText(_)) {
+        if matches!(request, Request::PasteText(_) | Request::CommitText(_)) {
             bail!("paste requests contain private text and cannot be printed");
         }
         let json_str =

@@ -354,6 +354,7 @@ fn begin(
                 text: text.to_owned(),
                 shortcut,
                 timeout_ms,
+                context_revision: None,
             },
             Rc::downgrade(&owner),
             tx,
@@ -648,6 +649,7 @@ fn private_paste_preflight_errors_leave_selection_and_focus_untouched() {
                     text,
                     timeout_ms,
                     shortcut: PasteShortcut::CtrlV,
+                    context_revision: None,
                 },
                 Rc::downgrade(&owner),
                 tx
@@ -674,6 +676,7 @@ fn private_paste_preflight_errors_leave_selection_and_focus_untouched() {
                 text: String::from("text"),
                 timeout_ms: 5000,
                 shortcut: PasteShortcut::CtrlV,
+                context_revision: None,
             },
             Rc::downgrade(&owner),
             tx,

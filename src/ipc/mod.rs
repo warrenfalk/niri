@@ -22,6 +22,7 @@ mod tests {
             serde_json::json!({"PasteText": secret}),
             serde_json::json!({"PasteText": {"id": secret, "text": secret}}),
             serde_json::json!({"PasteText": {"id": 12, "text": secret, "shortcut": secret}}),
+            serde_json::json!({"CommitText": {"id": 12, "text": secret, "context_revision": secret}}),
         ] {
             let error = super::decode_request(&serde_json::to_vec(&value).unwrap()).unwrap_err();
             assert!(!error.contains(secret));

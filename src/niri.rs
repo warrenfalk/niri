@@ -355,6 +355,7 @@ pub struct Niri {
 
     pub seat: Seat<State>,
     pub temporary_paste: Option<crate::clipboard_paste::TemporaryPaste>,
+    pub text_context: Option<crate::text_context::ContextLease>,
     /// Scancodes of the keys to suppress.
     pub suppressed_keys: HashSet<Keycode>,
     pub key_release_bindings: crate::input::key_release::KeyReleaseBindings,
@@ -862,6 +863,7 @@ impl State {
         self.update_keyboard_focus();
 
         self.refresh_temporary_paste();
+        self.refresh_text_context();
 
         // Should be called before refresh_layout() because that one will refresh other window
         // states and then send a pending configure.
@@ -2857,6 +2859,7 @@ impl Niri {
 
             seat,
             temporary_paste: None,
+            text_context: None,
             keyboard_focus: KeyboardFocus::Layout { surface: None },
             layer_shell_on_demand_focus: None,
             idle_inhibiting_surfaces: HashSet::new(),
