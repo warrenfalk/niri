@@ -4,7 +4,9 @@ The local fork provides `spawn-with-key-release "program" "argument"` for
 keyboard bindings. It starts a child on press and sends the hold duration in
 milliseconds followed by a newline to its standard input on trigger-key
 release. EOF without that line means cancellation. This action never repeats
-and cannot run while locked. See
+and cannot run while locked. Add `wait-for-all-keys=true` to wait until all keys
+and shortcut modifiers are released before notifying the child, while still
+measuring the hold duration only until the trigger key's release. See
 [`wf_features/key-release-spawn.md`](../../wf_features/key-release-spawn.md)
 for the complete contract.
 

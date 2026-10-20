@@ -62,6 +62,7 @@ impl VirtualKeyboardHandler for State {
                 keyboard.with_xkb_state(self, |mut context| {
                     context.set_modifier_mask(mods_depressed, mods_latched, mods_locked, group);
                 });
+                self.finish_waiting_key_releases();
             }
             InputEvent::Special(VirtualKeyboardSpecialEvent::KeymapChanged { .. }) => {
                 // The new keymap will be activated by the next key or modifiers event.

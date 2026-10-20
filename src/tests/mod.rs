@@ -10,6 +10,7 @@ mod binds;
 mod clipboard_paste;
 mod floating;
 mod fullscreen;
+mod key_release;
 mod layer_shell;
 mod remove_output;
 mod transactions;

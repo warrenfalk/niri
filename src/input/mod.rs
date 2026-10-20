@@ -633,6 +633,7 @@ impl State {
             self.niri
                 .key_release_bindings
                 .release(source, event.key_code());
+            self.finish_waiting_key_releases();
             return;
         }
 
@@ -640,6 +641,18 @@ impl State {
         self.handle_key_bind(bind.clone(), Some((source, event.key_code())));
 
         self.start_key_repeat(bind);
+    }
+
+    pub fn finish_waiting_key_releases(&mut self) {
+        let keyboard = self.niri.seat.get_keyboard().unwrap();
+        let mods = keyboard.modifier_state();
+        // Include modifiers set through virtual-keyboard masks, which may
+        // have no corresponding pressed key. Caps/Num Lock remain allowed.
+        let idle = keyboard.pressed_keys().is_empty()
+            && modifiers_from_state(mods).is_empty()
+            && mods.serialized.depressed == 0
+            && mods.serialized.latched == 0;
+        self.niri.key_release_bindings.finish_if_idle(idle);
     }
 
     fn start_key_repeat(&mut self, bind: Bind) {
@@ -739,9 +752,13 @@ impl State {
         allow_when_locked: bool,
         key: Option<(KeyboardSource, Keycode)>,
     ) {
-        if let Action::SpawnWithKeyRelease(command) = action {
+        if let Action::SpawnWithKeyRelease(command, wait_for_all_keys) = action {
             let Some((source, key)) = key else { return };
-            match self.niri.key_release_bindings.start(source, key) {
+            match self
+                .niri
+                .key_release_bindings
+                .start(source, key, wait_for_all_keys)
+            {
                 Ok(Some(stdin)) => {
                     let workspace = self.niri.active_launched_from_workspace();
                     let (token, _) = self.niri.activation_state.create_external_token(None);
@@ -839,7 +856,7 @@ impl State {
                 let (token, _) = self.niri.activation_state.create_external_token(None);
                 spawn_sh(command, Some(token.clone()), workspace);
             }
-            Action::SpawnWithKeyRelease(_) => {
+            Action::SpawnWithKeyRelease(..) => {
                 warn!("spawn-with-key-release requires a keyboard binding");
             }
             Action::DoScreenTransition(delay_ms) => {

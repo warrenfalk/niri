@@ -114,7 +114,10 @@ pub enum Action {
     DebugToggleDamage,
     ToggleTouchpad,
     Spawn(#[knuffel(arguments)] Vec<String>),
-    SpawnWithKeyRelease(#[knuffel(arguments)] Vec<String>),
+    SpawnWithKeyRelease(
+        #[knuffel(arguments)] Vec<String>,
+        #[knuffel(property(name = "wait-for-all-keys"), default)] bool,
+    ),
     SpawnSh(#[knuffel(argument)] String),
     DoScreenTransition(#[knuffel(property(name = "delay-ms"))] Option<u16>),
     #[knuffel(skip)]
@@ -909,7 +912,7 @@ where
             }
             match Action::decode_node(child, ctx) {
                 Ok(action) => {
-                    if matches!(action, Action::SpawnWithKeyRelease(_)) {
+                    if matches!(action, Action::SpawnWithKeyRelease(..)) {
                         if !matches!(key.trigger, Trigger::Keysym(_)) {
                             ctx.emit_error(DecodeError::unexpected(
                                 child,
@@ -1079,7 +1082,15 @@ mod tests {
         assert!(!bind.repeat);
         assert_eq!(
             bind.action,
-            Action::SpawnWithKeyRelease(vec!["dictation".into(), "hotkey".into()])
+            Action::SpawnWithKeyRelease(vec!["dictation".into(), "hotkey".into()], false)
+        );
+        let config = crate::Config::parse_mem(
+            r#"binds { Mod+D { spawn-with-key-release "dictation" "hotkey" wait-for-all-keys=true; }; }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            config.binds.0[0].action,
+            Action::SpawnWithKeyRelease(vec!["dictation".into(), "hotkey".into()], true)
         );
         assert!(crate::Config::parse_mem(
             r#"binds { Mod+WheelScrollDown { spawn-with-key-release "dictation"; }; }"#,
