@@ -28,13 +28,13 @@ release-to-send behavior depend on these contracts.
 
 The supporting repository is
 [`warrenfalk/smithay`](https://github.com/warrenfalk/smithay), published on branch
-[`text-input-context`](https://github.com/warrenfalk/smithay/tree/text-input-context).
+[`main`](https://github.com/warrenfalk/smithay/tree/main).
 That branch contains both wsprflow support commits:
 
 | wsprflow need | Smithay commit | Changed code and contract |
 | --- | --- | --- |
-| Niri must enumerate the destination client's regular clipboard devices and re-offer the real selection without changing or cancelling its source. | [`75056ca4`](https://github.com/warrenfalk/smithay/commit/75056ca436e29a2ef4db2aa6b612654beba4c554) — non-mutating client offer helpers | `src/wayland/selection/data_device/mod.rs`, `src/wayland/selection/seat_data.rs`; [PRIVATE-OFFERS.md](https://github.com/warrenfalk/smithay/blob/text-input-context/PRIVATE-OFFERS.md) |
-| Niri must read committed text-input context, distinguish field activations and enable compositor mediation while preserving an external input method's lifecycle. | [`db81bd65`](https://github.com/warrenfalk/smithay/commit/db81bd653782221673230abddeafb2195ccdb2eb) — committed context and mediation support | `src/wayland/text_input/mod.rs`, `src/wayland/text_input/text_input_handle.rs`; [wf_text_input_context.md](https://github.com/warrenfalk/smithay/blob/text-input-context/wf_text_input_context.md) |
+| Niri must enumerate the destination client's regular clipboard devices and re-offer the real selection without changing or cancelling its source. | [`75056ca4`](https://github.com/warrenfalk/smithay/commit/75056ca436e29a2ef4db2aa6b612654beba4c554) — non-mutating client offer helpers | `src/wayland/selection/data_device/mod.rs`, `src/wayland/selection/seat_data.rs`; [PRIVATE-OFFERS.md](https://github.com/warrenfalk/smithay/blob/main/PRIVATE-OFFERS.md) |
+| Niri must read committed text-input context, distinguish field activations and enable compositor mediation while preserving an external input method's lifecycle. | [`db81bd65`](https://github.com/warrenfalk/smithay/commit/db81bd653782221673230abddeafb2195ccdb2eb) — committed context and mediation support | `src/wayland/text_input/mod.rs`, `src/wayland/text_input/text_input_handle.rs`; [wf_text_input_context.md](https://github.com/warrenfalk/smithay/blob/main/wf_text_input_context.md) |
 
 Both workspace dependencies, `smithay` and `smithay-drm-extras`, currently pin
 `db81bd653782221673230abddeafb2195ccdb2eb` from that GitHub fork in
