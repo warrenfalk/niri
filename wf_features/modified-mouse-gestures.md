@@ -1,5 +1,10 @@
 # Reserve modified mouse clicks for an application
 
+**wsprflow purpose:** Added specifically so clicking wsprflow's draft editor
+while Mod+D is held can switch to hands-free dictation and edit the draft,
+without Niri starting a window move or resize. See the
+[wsprflow feature overview](wsprflow.md) for related fork changes.
+
 A focused application may need mouse clicks while the compositor modifier is
 held, such as clicking a push-to-talk dictation editor to keep listening.
 Niri normally uses these clicks to move or resize windows or drag workspaces.

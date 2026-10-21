@@ -1,5 +1,9 @@
 # Connection-owned window marker
 
+**wsprflow purpose:** Added specifically to mark wsprflow's original dictation
+destination while its draft editor or another application has keyboard focus.
+See the [wsprflow feature overview](wsprflow.md) for related fork changes.
+
 Trusted local integrations can identify one destination independently of keyboard
 focus. Speech recognition, destination selection and dictation policy belong to
 the integration. The capability is generic and has no urgency or application-name

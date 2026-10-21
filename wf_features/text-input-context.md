@@ -1,5 +1,10 @@
 # Destination text context for dictation
 
+**wsprflow purpose:** Added specifically so wsprflow can adapt new dictation to
+the destination's existing text and caret, then check the field again before
+sending. Existing destination text stays intact. See the
+[wsprflow feature overview](wsprflow.md) for its supporting Smithay changes.
+
 A dictation integration can read surrounding text from a native Wayland field,
 adapt its new words to that context, and condition private paste on the same
 field state. Existing destination text is never edited by this API. Recognition,

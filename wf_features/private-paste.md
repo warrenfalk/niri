@@ -1,5 +1,10 @@
 # Destination-specific temporary paste
 
+**wsprflow purpose:** Added specifically so wsprflow can insert dictated text
+without replacing the user's clipboard or adding dictation to clipboard history.
+It remains the insertion path for destinations without usable text-input context.
+See the [wsprflow feature overview](wsprflow.md) for its Smithay dependency.
+
 An integration can send UTF-8 text to a native Wayland application's ordinary
 paste shortcut without becoming the ordinary clipboard owner. Recognition,
 draft policy, choosing the destination and choosing its shortcut belong to the

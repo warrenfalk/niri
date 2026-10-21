@@ -1,5 +1,10 @@
 # Spawn with key release
 
+**wsprflow purpose:** Added specifically for wsprflow's Mod+D tap/hold dictation
+modes. The later `wait-for-all-keys` option prevents release-to-send from firing
+while Mod is still held after D is released. See the
+[wsprflow feature overview](wsprflow.md) for related fork changes.
+
 Applications such as push-to-talk dictation need the lifetime of a compositor
 shortcut, even when its press and release are consumed by the compositor or
 focus changes to another application.

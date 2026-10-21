@@ -1,5 +1,10 @@
 # Revision-guarded text-input insertion
 
+**wsprflow purpose:** Added specifically so wsprflow can submit dictated text
+directly to a supported field without clipboard involvement. This avoids Firefox
+GTK cancelling a private clipboard read when the real offer is restored. See the
+[wsprflow feature overview](wsprflow.md) for related Niri and Smithay changes.
+
 A dictation integration can submit new text directly to the native Wayland field
 whose live surrounding-text revision it holds. No clipboard offer, selection
 replacement, paste shortcut, synthetic key or delete-surrounding-text request is

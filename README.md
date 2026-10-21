@@ -12,6 +12,14 @@
 
 <img width="1280" height="720" alt="niri with a few windows open" src="https://github.com/user-attachments/assets/dea5909e-1859-4aaa-9d88-d37f9663e00b" />
 
+## wsprflow support in this fork
+
+This fork includes compositor features added specifically to support **wsprflow**
+desktop dictation: destination marking, clipboard-preserving insertion, tap/hold
+shortcuts, editing while a shortcut is held, and surrounding-text context.
+The [wsprflow feature overview](wf_features/wsprflow.md) maps each requirement to
+its feature contract, introducing commits, and supporting Smithay fork changes.
+
 ## About
 
 Windows are arranged in columns on an infinite strip going to the right.
